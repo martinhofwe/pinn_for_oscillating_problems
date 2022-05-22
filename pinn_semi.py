@@ -1,5 +1,3 @@
-import sys
-
 import scipy.signal as sig
 import numpy as np
 import tensorflow as tf
@@ -341,21 +339,47 @@ class PhysicsInformedNN(object):
     self.dtype = tf.float32
     self.p_norm = p_norm
 
+    # semi supervised
+    self.semi_mean = 0
+    self.semi_s = 0
+    self.semi_count = 0
+    self.semi_count_thresh = 1000
+    self.cond_var = tf.Variable([0.0])
+
     # Separating the collocation coordinates
     #self.x = tf.convert_to_tensor(X, dtype=self.dtype)
     
   # Defining custom loss
   @tf.function
-  def __loss(self,x, y_lbl,x_physics, y, x_semi_begin=None, semi_scale=None, p_norm=None):
+  def __loss(self,x, y_lbl,x_physics, y, x_semi_begin=None, semi_scale=None, p_norm=None, semi_mean=None, semi_s=None, semi_count=None, bool_var=None):
     f_pred = self.f_model(x_physics)
     if x_semi_begin is not None:
       data_loss =  tf.reduce_mean((y_lbl[:x_semi_begin] - y[:x_semi_begin])**2)
-      #print("###")
-      #print(semi_scale.shape)
-      #print(y_lbl[x_semi_begin:].shape)
-      #print(y[x_semi_begin:].shape)
-      #print("####")
-      data_loss_semi =  tf.reduce_mean(semi_scale*((y_lbl[x_semi_begin:] - y[x_semi_begin:])**2))
+      # calc for semi points
+      semi_pred = tf.squeeze(y[x_semi_begin:])
+      semi_pred_len = semi_pred.shape[0]
+      pred_padded = tf.pad(semi_pred, [[ 0 , semi_count.shape[0]-semi_pred_len]])
+      # https://www.johndcook.com/blog/standard_deviation/
+      x_minus_mean_old = (pred_padded-semi_mean)
+      semi_mean = semi_mean + x_minus_mean_old / semi_count
+      semi_s = semi_s + x_minus_mean_old * (pred_padded - semi_mean)
+
+      selector = tf.math.greater_equal(semi_count, 1000)
+
+
+      if bool_var is not None:
+        print("Adding semi points")
+        var = semi_s[:semi_pred_len][selector[:semi_pred_len]] / (semi_count[:semi_pred_len][selector[:semi_pred_len]] - tf.ones_like(semi_pred[:semi_pred_len][selector[:semi_pred_len]]))
+        mean_minus_pred_sq = (
+                  (semi_mean[:semi_pred_len][selector[:semi_pred_len]] - semi_pred[selector[:semi_pred_len]]) ** 2)
+        data_loss_semi = tf.reduce_mean(mean_minus_pred_sq * (
+                  1 - tf.math.exp(-(mean_minus_pred_sq / (2 * var[:semi_pred_len][selector[:semi_pred_len]])))))
+
+      else:
+        data_loss_semi = 0
+
+
+      semi_count = semi_count + tf.pad(tf.ones_like(semi_pred), [[ 0 , semi_count.shape[0]-semi_pred_len]]) # needs to be at the end to avoid division with zero therefor semi_count init to 1
     else:
       data_loss_semi = 0
       data_loss =  tf.reduce_mean((y_lbl - y)**2)
@@ -365,8 +389,7 @@ class PhysicsInformedNN(object):
     if p_norm == "l1":
       physics_loss = tf.reduce_mean(tf.math.abs(f_pred))
 
-
-    return data_loss+data_loss_semi+self.physics_scale*physics_loss
+    return data_loss+data_loss_semi+self.physics_scale*physics_loss, semi_mean, semi_s, semi_count
 
   def __grad_data(self, x, y_lbl):
     with tf.GradientTape() as tape:
@@ -378,10 +401,16 @@ class PhysicsInformedNN(object):
     return data_loss, tape.gradient(data_loss, self.__wrap_training_variables())
   
   def __grad(self, x, y_lbl, x_physics, x_semi_begin, semi_scale):
-    with tf.GradientTape() as tape:
-      tape.watch(x)  
-      loss_value = self.__loss(x,y_lbl, x_physics, self.model(x), x_semi_begin, semi_scale, p_norm=self.p_norm)
 
+    if tf.math.reduce_any(tf.math.greater_equal(self.semi_count, 1000)):
+      test_var = 0
+    else:
+      test_var = None
+
+    with tf.GradientTape() as tape:
+
+      tape.watch(x)  
+      loss_value, self.semi_mean, self.semi_s, self.semi_count = self.__loss(x,y_lbl, x_physics, self.model(x), x_semi_begin, semi_scale, p_norm=self.p_norm, semi_mean=self.semi_mean, semi_s=self.semi_s, semi_count=self.semi_count, bool_var=test_var)
     return loss_value, tape.gradient(loss_value, self.__wrap_training_variables())
 
   def __wrap_training_variables(self):
@@ -479,16 +508,16 @@ class PhysicsInformedNN(object):
     # Creating the tensors
     x = tf.convert_to_tensor(x, dtype=self.dtype)
     y_lbl = tf.convert_to_tensor(y_lbl, dtype=self.dtype)
-    x_physics =  tf.convert_to_tensor(x_physics, dtype=self.dtype)
+    x_physics = tf.convert_to_tensor(x_physics, dtype=self.dtype)
 
     x_semi_begin = None
     if x_semi is not None:
       x_semi = tf.convert_to_tensor(x_semi, dtype=self.dtype)
-      y_lbl_semi = tf.convert_to_tensor(y_semi, dtype=self.dtype)
-      semi_scale =  tf.convert_to_tensor(semi_scale, dtype=self.dtype)
+      #y_lbl_semi = tf.convert_to_tensor(y_semi, dtype=self.dtype)
+      #semi_scale =  tf.convert_to_tensor(semi_scale, dtype=self.dtype)
       x_semi_begin = x.shape[0]
       x = tf.concat([x, x_semi], 0)
-      y_lbl = tf.concat([y_lbl, y_lbl_semi], 0)
+      #y_lbl = tf.concat([y_lbl, y_lbl_semi], 0)
 
     #self.logger.log_train_opt("Adam")
     for epoch in range(tf_epochs):
@@ -512,8 +541,9 @@ class PhysicsInformedNN(object):
 # from matlab script############################################################
 def main():
   task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+  #task_id = int(sys.argv[1])
   print("task_id: ", task_id)
-  if task_id % 2 ==0:
+  if task_id % 2 == 0:
     act_func = tf.nn.tanh
     af_str = "tanh"
   else:
@@ -524,18 +554,16 @@ def main():
   else:
     p_norm = "l2"
 
-
-  layer_dic = {0: 3, 1: 3, 2: 7, 3: 7, 4: 12, 5: 12, 6: 20, 7: 20, 8: 3, 9: 3, 10: 7, 11: 7, 12: 12, 13: 12, 14: 20, 15: 20}
+  layer_dic = {0: 3, 1: 3, 2: 7, 3: 7, 4: 12, 5: 12, 6: 20, 7: 20, 8: 3, 9: 3, 10: 7, 11: 7, 12: 12, 13: 12, 14: 20,
+               15: 20}
 
   hidden_layers = layer_dic[task_id]
   layers = [4]
-  for i in range(hidden_layers+1):
+  for i in range(hidden_layers + 1):
     layers.append(34)
   layers.append(1)
 
   print("layers: ", layers)
-
-
   result_folder_name = 'res'
   if not os.path.exists(result_folder_name):
     os.makedirs(result_folder_name)
@@ -549,7 +577,6 @@ def main():
   ppi = 75
   max_iter_overall = 3000000
   meta_epochs = int((3750/(ppi/10))) # todo without hard coded numbers
-
   lr = tf.Variable(1e-4)
   tf_epochs_warm_up = 2000
   tf_epochs_train = int(max_iter_overall / meta_epochs)
@@ -560,7 +587,7 @@ def main():
     learning_rate=lr,
     beta_1=0.8, decay=0.)
 
-  experiment_name = "ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(hidden_layers) + "_pn_" + p_norm + "_af_" + af_str
+  experiment_name = "semi_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(hidden_layers) + "_pn_" + p_norm + "_af_" + af_str
   os.makedirs(result_folder_name + "/"+ experiment_name, exist_ok=True)
   os.makedirs(result_folder_name + "/" + experiment_name+ "/plots", exist_ok=True)
   # data creation##########################################################################################################
@@ -649,6 +676,7 @@ def main():
 
   input_all = tf.cast(tf.concat([t,u_lbl,up_lbl,ym1_lbl],axis=-1),tf.float32)
   input_data_physics = input_all
+
   input_data = tf.cast(tf.concat([x_data,u_data,u_dx_data,ym1_data],axis=-1),tf.float32)
 
   # plot and save data used
@@ -680,7 +708,7 @@ def main():
 
   def error():
     y, f = pinn.predict(input_all)
-    return np.mean((y_lbl - y)**2),np.mean(f**2)
+    return np.mean((y_lbl - y)**2),np.mean(f**2),
   logger.set_error_fn(error)
 
   print("Frame mode: ", str(mode_frame))
@@ -689,6 +717,22 @@ def main():
 
   pinn = PhysicsInformedNN(layers, h_activation_function= act_func, optimizer=tf_optimizer, logger=logger,c=c,d=d,n_inputs=layers[0],
                            scaling_factor=scaling_factor,physics_scale=physics_scale, p_norm=p_norm)
+
+  # todo as function
+  print("input_all shape:")
+  print(y_data.shape)
+  print(input_all.shape)
+  print(input_all[0::data_sampling].shape)
+  pot_semi_points = (input_all[0::data_sampling])[y_data.shape[0]::] # first point at index 251
+  pinn.semi_mean = tf.zeros_like(pot_semi_points[:,0])
+  pinn.semi_s =tf.zeros_like(pinn.semi_mean)
+  pinn.semi_count = tf.ones_like(pinn.semi_mean)
+  print(pot_semi_points.shape)
+  print("shapes")
+  print(pinn.semi_mean.shape)
+  print(pinn.semi_s.shape)
+  print(pinn.semi_count.shape)
+  # todo end
 
   y_pred, f_pred = pinn.predict(input_all)
   print(input_all.shape)
@@ -712,17 +756,30 @@ def main():
           p_end = 3998
         print("new p_end: ", p_end)
 
+      # add semi points one step behind physic points
+      if (i + 1) % 10 == 0 and (i + 1) >= 20:
+          nr_new_semipoints = ppi//data_sampling
+          input_data_semi = pot_semi_points[:(nr_new_semipoints*(((i + 1)-10)//10))]
+
       pinn.fit(input_data, y_data,input_data_physics[p_start:p_end],input_data_semi, y_data_semi_pseudo, pseudo_physics_norm, tf_epochs, show_summary=show_summary)
-      if (i + 1) % 100 == 0 or i == 0:
+      if (i + 1) % 10 == 0 or i == 0:
         y_pred, f_pred = pinn.predict(input_all)
         fig_res = plt.figure()
         plt.plot(t, y_pred)
         plt.scatter(x_data, y_data, c='r')
+        selector = tf.math.greater_equal(pinn.semi_count, 1000)
+
+        if tf.math.reduce_any(selector):
+          plt_len = int(tf.reduce_sum(tf.cast(selector, tf.float32)))
+          t_all = tExci[1::data_sampling]
+          x_data_semi = t_all[:plt_len]
+          plt.scatter(x_data_semi+t[251], pinn.semi_mean[:plt_len], c='c')
         plt.plot(t, y_lbl)
         plt.axvline(t[p_start], c='g')
         plt.axvline(t[p_end], c='r')
         plt.scatter(x_data, y_data, c='r')
         fig_res.savefig(result_folder_name + "/" + experiment_name + "/plots/" +str(i+1)+ '.png')
+        plt.close(fig_res)
         with open(result_folder_name + "/" + experiment_name + "/loss.pkl", "wb") as fp:
           pickle.dump(logger.loss_over_meta, fp)
         with open(result_folder_name + "/" + experiment_name + "/loss_epoch.pkl", "wb") as fp:

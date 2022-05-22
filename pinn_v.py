@@ -8,7 +8,6 @@ from datetime import datetime
 import os
 import matplotlib.pyplot as plt
 import pickle
-import sys
 
 np.random.seed(1234)
 tf.random.set_seed(1234)
@@ -359,12 +358,10 @@ class PhysicsInformedNN(object):
     else:
       data_loss_semi = 0
       data_loss =  tf.reduce_mean((y_lbl - y)**2)
-
     if p_norm == "l2":
       physics_loss = tf.reduce_mean(f_pred**2)
     if p_norm == "l1":
       physics_loss = tf.reduce_mean(tf.math.abs(f_pred))
-
 
     return data_loss+data_loss_semi+self.physics_scale*physics_loss
 
@@ -512,8 +509,9 @@ class PhysicsInformedNN(object):
 # from matlab script############################################################
 def main():
   task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+  #task_id = int(sys.argv[1])
   print("task_id: ", task_id)
-  if task_id % 2 ==0:
+  if task_id % 2 == 0:
     act_func = tf.nn.tanh
     af_str = "tanh"
   else:
@@ -524,17 +522,16 @@ def main():
   else:
     p_norm = "l2"
 
-
-  layer_dic = {0: 3, 1: 3, 2: 7, 3: 7, 4: 12, 5: 12, 6: 20, 7: 20, 8: 3, 9: 3, 10: 7, 11: 7, 12: 12, 13: 12, 14: 20, 15: 20}
+  layer_dic = {0: 3, 1: 3, 2: 7, 3: 7, 4: 12, 5: 12, 6: 20, 7: 20, 8: 3, 9: 3, 10: 7, 11: 7, 12: 12, 13: 12, 14: 20,
+               15: 20}
 
   hidden_layers = layer_dic[task_id]
   layers = [4]
-  for i in range(hidden_layers+1):
+  for i in range(hidden_layers + 1):
     layers.append(34)
   layers.append(1)
 
   print("layers: ", layers)
-
 
   result_folder_name = 'res'
   if not os.path.exists(result_folder_name):
@@ -546,21 +543,20 @@ def main():
   p_start = 0
   p_end = 250
   # parameters ########################################################################################################
-  ppi = 75
+  ppi = 0
   max_iter_overall = 3000000
-  meta_epochs = int((3750/(ppi/10))) # todo without hard coded numbers
-
+  meta_epochs = 1 # todo without hard coded numbers
   lr = tf.Variable(1e-4)
   tf_epochs_warm_up = 2000
   tf_epochs_train = int(max_iter_overall / meta_epochs)
-  tf_epochs = tf_epochs_warm_up
+  tf_epochs = max_iter_overall
 
   mode_frame = False
   tf_optimizer = tf.keras.optimizers.Adam(
     learning_rate=lr,
     beta_1=0.8, decay=0.)
 
-  experiment_name = "ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(hidden_layers) + "_pn_" + p_norm + "_af_" + af_str
+  experiment_name = "vanilla_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(hidden_layers) + "_pn_" + p_norm + "_af_" + af_str
   os.makedirs(result_folder_name + "/"+ experiment_name, exist_ok=True)
   os.makedirs(result_folder_name + "/" + experiment_name+ "/plots", exist_ok=True)
   # data creation##########################################################################################################
@@ -703,16 +699,7 @@ def main():
       else:
           show_summary = False
 
-      if (i + 1) % 10 == 0 and ppi != 0:
-        tf_epochs = tf_epochs_train
-        if mode_frame:
-          p_start = p_end
-        p_end += ppi
-        if p_end > 3998:
-          p_end = 3998
-        print("new p_end: ", p_end)
-
-      pinn.fit(input_data, y_data,input_data_physics[p_start:p_end],input_data_semi, y_data_semi_pseudo, pseudo_physics_norm, tf_epochs, show_summary=show_summary)
+      pinn.fit(input_data, y_data,input_data_physics,input_data_semi, y_data_semi_pseudo, pseudo_physics_norm, tf_epochs, show_summary=show_summary)
       if (i + 1) % 100 == 0 or i == 0:
         y_pred, f_pred = pinn.predict(input_all)
         fig_res = plt.figure()
