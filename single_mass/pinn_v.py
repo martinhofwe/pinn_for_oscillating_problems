@@ -9,6 +9,9 @@ import os
 import matplotlib.pyplot as plt
 import pickle
 
+from data_simulation_single import get_simulated_data_single_mass
+
+
 np.random.seed(1234)
 tf.random.set_seed(1234)
 
@@ -48,8 +51,8 @@ class Logger(object):
 
   def log_train_epoch(self, epoch, loss, custom="", is_iter=False):
     if self.epoch_counter % self.frequency == 0:
-      data_error, physics_error = self.__get_error_u()
-      self.loss_over_epoch.append([data_error, physics_error])
+      data_error, physics_error, data_error_scaled, physics_error_scaled = self.__get_error_u()
+      self.loss_over_epoch.append([data_error, physics_error, data_error_scaled, physics_error_scaled])
       print(f"{'nt_epoch' if is_iter else 'tf_epoch'} = {epoch:6d}  elapsed = {self.__get_elapsed()}  loss = {loss:.4e}  data error = {data_error:.4e} physics error = {physics_error:.4e}  " + custom)
     self.epoch_counter += 1
   def log_train_opt(self, name):
@@ -58,8 +61,8 @@ class Logger(object):
 
   def log_train_end(self, epoch, custom=""):
     print("==================")
-    data_error,physics_error = self.__get_error_u()
-    self.loss_over_meta.append([data_error, physics_error])
+    data_error,physics_error, data_error_scaled, physics_error_scaled = self.__get_error_u()
+    self.loss_over_meta.append([data_error, physics_error, data_error_scaled, physics_error_scaled])
     print(f"Training finished (epoch {epoch}): duration = {self.__get_elapsed()}  data error = {data_error:.4e} physics error = {physics_error:.4e}  " + custom)
 
 # Time tracking functions
@@ -508,8 +511,8 @@ class PhysicsInformedNN(object):
 
 # from matlab script############################################################
 def main():
-  task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-  #task_id = int(sys.argv[1])
+  #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+  task_id = int(sys.argv[1])
   print("task_id: ", task_id)
   if task_id % 2 == 0:
     act_func = tf.nn.tanh
@@ -517,10 +520,8 @@ def main():
   else:
     act_func = tf.math.sin
     af_str = "sin"
-  if task_id <= 7:
-    p_norm = "l1"
-  else:
-    p_norm = "l2"
+
+  p_norm = "l2"
 
   layer_dic = {0: 3, 1: 3, 2: 7, 3: 7, 4: 12, 5: 12, 6: 20, 7: 20, 8: 3, 9: 3, 10: 7, 11: 7, 12: 12, 13: 12, 14: 20,
                15: 20}
@@ -528,7 +529,7 @@ def main():
   hidden_layers = layer_dic[task_id]
   layers = [4]
   for i in range(hidden_layers + 1):
-    layers.append(34)
+    layers.append(64) # todo test
   layers.append(1)
 
   print("layers: ", layers)
@@ -544,7 +545,7 @@ def main():
   p_end = 250
   # parameters ########################################################################################################
   ppi = 0
-  max_iter_overall = 3000000
+  max_iter_overall = 10_000#3000000
   meta_epochs = 1 # todo without hard coded numbers
   lr = tf.Variable(1e-4)
   tf_epochs_warm_up = 2000
@@ -574,29 +575,29 @@ def main():
   c = (cSF/mWK)
   d = (dSF/mWK)
 
-  Av = 5.9233e-7;
-  Omc = 0.8246;
-  Omr = 0.0206;
-  Om = np.logspace(-2,1,100)
-  Fs = 200
+  #Av = 5.9233e-7;
+  #Omc = 0.8246;
+  #Omr = 0.0206;
+  #Om = np.logspace(-2,1,100)
+  #Fs = 200
   tExci = np.linspace(0, 10, 4000) #time
-  Fs_Exci = 5*Fs;
-  tExci_raw = np.linspace(0, 25, 25001)
-  frequ = np.hstack((np.linspace(0.05,1.95,40), np.linspace(2,15,100)))
+  #Fs_Exci = 5*Fs;
+  #tExci_raw = np.linspace(0, 25, 25001)
+  #frequ = np.hstack((np.linspace(0.05,1.95,40), np.linspace(2,15,100)))
   #for f1 in frequ:
-  f1 = 15.
-  Sz = (Av*Omc**2.)/ ((f1**2. +Omr**2)*(f1**2+Omc**2))
-  z_raw = Sz * np.sin(tExci_raw*f1*2*np.pi)
-  z_raw = z_raw * scale_factor
+  #f1 = 15.
+  #Sz = (Av*Omc**2.)/ ((f1**2. +Omr**2)*(f1**2+Omc**2))
+  #z_raw = Sz * np.sin(tExci_raw*f1*2*np.pi)
+  #z_raw = z_raw * scale_factor
 
-  u_raw = z_raw
-  up_raw = np.diff(u_raw,prepend=0)
+  #u_raw = z_raw
+  #up_raw = np.diff(u_raw,prepend=0)
   #up_raw = np.gradient(u_raw)# gradient vs diff?
-  u_orig = np.expand_dims(u_raw,-1)
-  up_orig = np.expand_dims(np.diff(np.squeeze(u_raw),prepend=0),-1)
+  #u_orig = np.expand_dims(u_raw,-1)
+  #up_orig = np.expand_dims(np.diff(np.squeeze(u_raw),prepend=0),-1)
 
-  u_orig = np.expand_dims(np.interp(tExci,tExci_raw,u_raw),1) #todo why interpolation?
-  up_orig = np.expand_dims(np.interp(tExci, tExci_raw,up_raw),1)
+  #u_orig = np.expand_dims(np.interp(tExci,tExci_raw,u_raw),1) #todo why interpolation?
+  #up_orig = np.expand_dims(np.interp(tExci, tExci_raw,up_raw),1)
 
   tExci =  np.expand_dims(tExci, 1)
   u_orig = np.zeros_like(tExci)
@@ -628,6 +629,39 @@ def main():
   dy_orig = np.expand_dims(dy_orig, 1)
   dy2_orig = np.expand_dims(dy2_orig, 1)
 
+  start_vec = [1, 0]
+  m1 = 30000/2
+  css = 0.5e6 * 2
+  dss = 1.5e4 * 2
+  exp_len = 4000
+  y_m1_simul, y_m1_dx_simul, y_m1_dx2_simul, u_simul, up_simul, tExci, simul_constants = get_simulated_data_single_mass(start_vec, end_time=10, steps=4000, exp_len=exp_len, m1=m1, css=css,dss=dss, debug_data=True)
+
+  print(y_m1_simul.shape)
+  print(y_orig.shape)
+  print(np.allclose(y_m1_simul, y_orig))
+  print(np.allclose(y_m1_dx_simul, dy_orig)) # so wieso falsch kann ignoriert werden
+  #print(np.allclose(y_m1_dx2_simul, dy2_orig))
+  fig = plt.figure()
+  ax = fig.add_subplot(1,1,1)
+  plt.plot(tExci, y_orig, label="y_orig")
+  plt.plot(tExci, y_m1_simul, label="y_m1_simul")
+  #plt.plot(tExci, y_m1_dx_simul, label="y_m1_dx_simul")
+  #plt.plot(tExci, y_m1_dx2_simul, label="y_m1_dx2_simul")
+
+  plt.legend()
+  #plt.show()
+  fig.savefig(result_folder_name+"/" + experiment_name + '/test.png')
+  fig = plt.figure()
+  ax = fig.add_subplot(1,1,1)
+  plt.plot(tExci, y_m1_simul-y_orig, label="diff")
+  #plt.plot(tExci, y_m1_dx_simul, label="y_m1_dx_simul")
+  #plt.plot(tExci, y_m1_dx2_simul, label="y_m1_dx2_simul")
+
+  plt.legend()
+  #plt.show()
+  fig.savefig(result_folder_name+"/" + experiment_name + '/test2.png')
+  assert False
+
   # Getting the data
   data_sampling = 10
   scaling_factor = 1#1e12
@@ -647,11 +681,13 @@ def main():
   input_data_physics = input_all
   input_data = tf.cast(tf.concat([x_data,u_data,u_dx_data,ym1_data],axis=-1),tf.float32)
 
+  loss_scale_term = np.exp(-(dSF)/(2*mWK)*t)
   # plot and save data used
   fig = plt.figure()
   ax = fig.add_subplot(1,1,1)
   plt.plot(t, y_lbl, label="Exact solution")
   plt.scatter(x_data,y_data,c="r")
+  plt.plot(t, loss_scale_term, label="exp(-(dSF)/(2*m)*t)")
   plt.legend()
   #plt.show()
   fig.savefig(result_folder_name+"/" + experiment_name + '/exact_solution.png')
@@ -674,9 +710,11 @@ def main():
   #plt.show()
   fig.savefig(result_folder_name + "/" + experiment_name + '/u_close_up.png')
 
+
+
   def error():
     y, f = pinn.predict(input_all)
-    return np.mean((y_lbl - y)**2),np.mean(f**2)
+    return np.mean((y_lbl - y)**2),np.mean(f**2), np.mean(loss_scale_term*((y_lbl - y)**2)), np.mean(loss_scale_term*(f**2))
   logger.set_error_fn(error)
 
   print("Frame mode: ", str(mode_frame))
@@ -717,6 +755,7 @@ def main():
         with open(result_folder_name + "/" + experiment_name + "/p_end.pkl", "wb") as fp:
           pickle.dump([p_start, p_end], fp)
 
+
   with open(result_folder_name + "/" + experiment_name + "/loss.pkl", "wb") as fp:
     pickle.dump(logger.loss_over_meta, fp)
   with open(result_folder_name+ "/" + experiment_name +"/loss_epoch.pkl", "wb") as fp:
@@ -728,21 +767,38 @@ def main():
 
 
   fig_l = plt.figure()
-  plt.title("Loss over meta epochs")
-  plt.plot([l[0] for l in logger.loss_over_meta], label='data_error')
-  plt.plot([l[1] for l in logger.loss_over_meta], label='physics_error')
+  plt.title("Loss over epochs")
+  plt.plot([l[0] for l in logger.loss_over_epoch], label='data_error')
+  plt.plot([l[1] for l in logger.loss_over_epoch], label='physics_error')
   plt.yscale("log")
   plt.legend()
   fig_l.savefig(result_folder_name + "/" + experiment_name + '/_loss.png')
   #plt.show()
 
   fig_s = plt.figure()
-  plt.title("Loss over meta epochs scaled")
-  plt.plot([l[0] for l in logger.loss_over_meta], label='data_error')
-  plt.plot([l[1]*physics_scale for l in logger.loss_over_meta], label='physics_error')
+  plt.title("Loss over epochs scaled")
+  plt.plot([l[0] for l in logger.loss_over_epoch], label='data_error')
+  plt.plot([l[1]*physics_scale for l in logger.loss_over_epoch], label='physics_error')
   plt.yscale("log")
   plt.legend()
   fig_s.savefig(result_folder_name + "/" + experiment_name + '/_loss_s.png')
+
+  fig_l = plt.figure()
+  plt.title("Loss over epochs exp scaled")
+  plt.plot([l[2] for l in logger.loss_over_epoch], label='data_error')
+  plt.plot([l[3] for l in logger.loss_over_epoch], label='physics_error')
+  plt.yscale("log")
+  plt.legend()
+  fig_l.savefig(result_folder_name + "/" + experiment_name + '/loss_exp.png')
+  #plt.show()
+
+  fig_s = plt.figure()
+  plt.title("Loss over epochs scaled +  exp scaled")
+  plt.plot([l[2] for l in logger.loss_over_epoch], label='data_error')
+  plt.plot([l[3]*physics_scale for l in logger.loss_over_epoch], label='physics_error')
+  plt.yscale("log")
+  plt.legend()
+  fig_s.savefig(result_folder_name + "/" + experiment_name + '/loss_s_exp.png')
 
   y_pred, f_pred = pinn.predict(input_all)
 

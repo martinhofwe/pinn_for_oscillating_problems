@@ -10,17 +10,17 @@ import matplotlib.pyplot as plt
 import pickle
 
 
-def simulate_two_mass(start_vector,  end_time, steps, m1_in, m2_in, css_in, dss_in):
+def simulate_two_mass(start_vector,  end_time, steps):
     np.random.seed(1234)
     tf.random.set_seed(1234)
 
     start_vec = start_vector
     cPS = 1e6 * 4  # Stiffness Primary Suspension
     dPS = 1e4 * 4  # Damping Primary Suspension
-    mDG = m1_in
-    cSS = css_in#0.5e6 * 2  # Stiffness Secondary Suspension
-    dSS = dss_in #1.5e4 * 2  # Stiffness Primary Suspension
-    mWK = m2_in#30000 / 2
+    mDG = 3000
+    cSS = 0.5e6 * 2  # Stiffness Secondary Suspension
+    dSS = 1.5e4 * 2  # Stiffness Primary Suspension
+    mWK = 30000 / 2
 
     m2 = mWK
     m1 = mDG
@@ -85,8 +85,8 @@ def get_data(y_orig_all, r_debug, exp_len, time_step):
       else:
           return y_m2, None, None, y_m1, None, None, u, up
 
-def get_simulated_data_two_mass(start_vector, end_time=20, steps=4001, exp_len=400,m1=15000, m2=15000, css=0.5e6 * 2,dss=1.5e4 * 2, debug_data=True):
-    tsim_nom_orig, y_orig_all, xsim_nom_orig, simul_const = simulate_two_mass(start_vector, end_time, steps,m1, m2, css, dss)
+def get_simulated_data_two_mass(start_vector, end_time=20, steps=4001, exp_len=400,  debug_data=True):
+    tsim_nom_orig, y_orig_all, xsim_nom_orig, simul_const = simulate_two_mass(start_vector, end_time, steps)
     y_m2_out, y_m2_dx_out, y_m2_dx2_out, y_m1_out, y_m1_dx_out, y_m1_dx2_out, u_out, up_out = get_data(y_orig_all, debug_data, exp_len=exp_len, time_step=end_time/steps)
     return y_m2_out, y_m2_dx_out, y_m2_dx2_out, y_m1_out, y_m1_dx_out, y_m1_dx2_out, u_out, up_out, np.expand_dims(tsim_nom_orig[:exp_len], 1), simul_const# + tsim_nom_orig #todo remove exp len
 
