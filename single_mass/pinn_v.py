@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import pickle
 
 from data_simulation_single import get_simulated_data_single_mass
+from plot_single_mass import plot_solution, plot_loss, plot_terms_diff, plot_terms_detail
 
 
 np.random.seed(1234)
@@ -50,11 +51,16 @@ class Logger(object):
     print(self.model.summary())
 
   def log_train_epoch(self, epoch, loss, custom="", is_iter=False):
+    data_error, physics_error, data_error_scaled, physics_error_scaled = self.__get_error_u()
+    total_error_mean = np.mean([data_error, physics_error])
+    total_error_data = np.mean([data_error])
     if self.epoch_counter % self.frequency == 0:
-      data_error, physics_error, data_error_scaled, physics_error_scaled = self.__get_error_u()
       self.loss_over_epoch.append([data_error, physics_error, data_error_scaled, physics_error_scaled])
+    if self.epoch_counter % 1000 == 0:
       print(f"{'nt_epoch' if is_iter else 'tf_epoch'} = {epoch:6d}  elapsed = {self.__get_elapsed()}  loss = {loss:.4e}  data error = {data_error:.4e} physics error = {physics_error:.4e}  " + custom)
     self.epoch_counter += 1
+    return total_error_mean, total_error_data
+
   def log_train_opt(self, name):
     # print(f"tf_epoch =      0  elapsed = 00:00  loss = 2.7391e-01  error = 9.0843e-01")
     print(f"—— Starting {name} optimization ——")
@@ -308,7 +314,7 @@ class Struct(dummy):
     return self.__dict__.get(key, 0)
 
 class PhysicsInformedNN(object):
-  def __init__(self, layers, h_activation_function, optimizer, logger,c,d,n_inputs=3,scaling_factor=1e12,physics_scale=1.0, p_norm="l2"):
+  def __init__(self, layers, h_activation_function, optimizer, logger,c,d,m, n_inputs=3,scaling_factor=1e12,physics_scale=1.0, p_norm="l2"):
     
     self.model = tf.keras.Sequential()
     self.model.add(tf.keras.layers.InputLayer(input_shape=(layers[0],)))
@@ -332,6 +338,7 @@ class PhysicsInformedNN(object):
         self.sizes_w.append(int(width * layers[1]))
         self.sizes_b.append(int(width if i != 0 else layers[1]))
 
+    self.m = tf.constant(m / scaling_factor, dtype=tf.float32)
     self.c = tf.constant(c/scaling_factor,dtype=tf.float32)
     self.d = tf.constant(d/scaling_factor,dtype=tf.float32)
 
@@ -345,6 +352,21 @@ class PhysicsInformedNN(object):
 
     # Separating the collocation coordinates
     #self.x = tf.convert_to_tensor(X, dtype=self.dtype)
+    # for early stopping implementation
+    self.ea_elements = 200
+    self.ea_overlap = 0
+    self.ea_error_lst = []
+    self.ea_error_data_lst = []
+    self.ea_mean_lst = []
+    self.ea_median_lst = []
+    self.ea_mean_data_lst = []
+    self.ea_median_data_lst = []
+
+  def __get_save_intermediate(self):
+    return self.save_intermediate()
+
+  def set_save_intermediate(self, save_f):
+    self.save_intermediate = save_f
     
   # Defining custom loss
   @tf.function
@@ -377,6 +399,7 @@ class PhysicsInformedNN(object):
       print(data_loss)
     return data_loss, tape.gradient(data_loss, self.__wrap_training_variables())
   
+  @tf.function
   def __grad(self, x, y_lbl, x_physics, x_semi_begin, semi_scale):
     with tf.GradientTape() as tape:
       tape.watch(x)  
@@ -389,6 +412,7 @@ class PhysicsInformedNN(object):
     return var
 
   # The actual PINN
+  @tf.function
   def f_model(self,x):
     # Using the new GradientTape paradigm of TF2.0,
     # which keeps track of operations to get the gradient at runtime
@@ -418,12 +442,11 @@ class PhysicsInformedNN(object):
       x_ = tf.expand_dims(x[...,0],-1)
       u = tf.expand_dims(x[...,1],-1)
       u_dx = tf.expand_dims(x[...,2],-1)
-      ym1_lbl = tf.expand_dims(x[...,3],-1)
 
       # Variables t and x are watched during tape
       # to compute derivatives u_t and u_x
       tape.watch(x_)
-      x_watched_full = tf.concat([x_,u,u_dx,ym1_lbl],axis=-1)
+      x_watched_full = tf.concat([x_,u,u_dx],axis=-1)
 
       # Determine residual
       y = self.model(x_watched_full)
@@ -442,7 +465,42 @@ class PhysicsInformedNN(object):
     #print(self.k*y+y_dx2+self.mu*y_dx)
 
     # Buidling the PINNs
-    return (-y_dx2/self.scaling_factor) -self.d*y_dx - self.c*y + self.d*u_dx + self.c*u
+    return (-y_dx2/self.scaling_factor) -(self.d/self.m)*y_dx - (self.c/self.m)*y + (self.d/self.m)*u_dx + (self.c/self.m)*u
+
+  def f_model_detail(self, x):
+    #########################################
+    # https://colab.research.google.com/github/janblechschmidt/PDEsByNNs/blob/main/PINN_Solver.ipynb#scrollTo=azOBDHMoZEkn
+    with tf.GradientTape(persistent=True) as tape:
+      # Split t and x to compute partial derivatives
+      x_ = tf.expand_dims(x[..., 0], -1)
+      u = tf.expand_dims(x[..., 1], -1)
+      u_dx = tf.expand_dims(x[..., 2], -1)
+
+      # Variables t and x are watched during tape
+      # to compute derivatives u_t and u_x
+      tape.watch(x_)
+      x_watched_full = tf.concat([x_, u, u_dx], axis=-1)
+
+      # Determine residual
+      y = self.model(x_watched_full)
+      y_dx = tape.gradient(y, x_)
+    y_dx2 = tape.gradient(y_dx, x_)
+
+    del tape
+
+    #####################################
+
+    y_dx = tf.expand_dims(y_dx[..., 0], -1)
+    y_dx2 = tf.expand_dims(y_dx2[..., 0], -1)
+    # Letting the tape go
+    # del tape
+    # print("____dx_______")
+    # print(self.k*y+y_dx2+self.mu*y_dx)
+
+    # Buidling the PINNs
+    error = (-y_dx2 / self.scaling_factor) - (self.d / self.m) * y_dx - (self.c / self.m) * y + (
+              self.d / self.m) * u_dx + (self.c / self.m) * u
+    return error, y, y_dx, y_dx2
 
   def get_params(self, numpy=False):
     return self.k
@@ -500,9 +558,47 @@ class PhysicsInformedNN(object):
       else:
         loss_value, grads = self.__grad(x, y_lbl, x_physics, x_semi_begin, semi_scale)
         self.optimizer.apply_gradients(zip(grads, self.__wrap_training_variables()))
-      self.logger.log_train_epoch(epoch, loss_value)
+
+
+      # Early detection
+      total_error_mean, data_error_mean = self.logger.log_train_epoch(epoch, loss_value)
+      self.ea_error_lst.append(total_error_mean)
+      self.ea_error_data_lst.append(data_error_mean)
+
+      if len(self.ea_error_lst) == (self.ea_elements + (self.ea_elements - self.ea_overlap)):
+        prev_error_mean = np.mean(self.ea_error_lst[:self.ea_elements])
+        curr_error_mean = np.mean(self.ea_error_lst[(self.ea_elements - self.ea_overlap)::])
+
+        prev_error_mean_data = np.mean(self.ea_error_data_lst[:self.ea_elements])
+        curr_error_mean_data = np.mean(self.ea_error_data_lst[(self.ea_elements - self.ea_overlap)::])
+
+        prev_error_median = np.median(self.ea_error_lst[:self.ea_elements])
+        curr_error_median = np.median(self.ea_error_lst[(self.ea_elements - self.ea_overlap)::])
+
+        prev_error_median_data = np.median(self.ea_error_data_lst[:self.ea_elements])
+        curr_error_median_data = np.median(self.ea_error_data_lst[(self.ea_elements - self.ea_overlap)::])
+
+        if curr_error_mean > prev_error_mean:
+          self.ea_mean_lst.append([prev_error_mean, curr_error_mean, epoch])
+        if curr_error_median > prev_error_median:
+          self.ea_median_lst.append([prev_error_median, curr_error_median, epoch])
+        if curr_error_mean_data > prev_error_mean_data:
+          self.ea_mean_data_lst.append([prev_error_mean_data, curr_error_mean_data, epoch])
+        if curr_error_median_data > prev_error_median_data:
+          self.ea_median_data_lst.append([prev_error_median_data, curr_error_median_data, epoch])
+
+        del self.ea_error_lst[:(self.ea_elements - self.ea_overlap)]
+
+      # store res if computation time runs out so that you have something
+      if epoch % 50_000 == 0:
+        print("store save")
+        #self.save_intermediate()
+        print("store save end")
+
 
     self.logger.log_train_end(tf_epochs)
+
+    return self.ea_mean_lst, self.ea_median_lst, self.ea_mean_data_lst, self.ea_median_data_lst
 
   def predict(self, x):
     y = self.model(x)
@@ -515,21 +611,26 @@ def main():
   task_id = int(sys.argv[1])
   print("task_id: ", task_id)
   if task_id % 2 == 0:
-    act_func = tf.nn.tanh
-    af_str = "tanh"
+    #act_func = tf.nn.tanh
+    #af_str = "tanh"
+    scl = 10
   else:
-    act_func = tf.math.sin
-    af_str = "sin"
-
+    #act_func = tf.math.sin
+    #af_str = "sin"
+    scl = 100
+  act_func = tf.math.sin#tf.keras.activations.swish#
+  af_str = "sin"
   p_norm = "l2"
+  physics_scale = 1e-4
 
-  layer_dic = {0: 3, 1: 3, 2: 7, 3: 7, 4: 12, 5: 12, 6: 20, 7: 20, 8: 3, 9: 3, 10: 7, 11: 7, 12: 12, 13: 12, 14: 20,
-               15: 20}
+  #scl_dic = {0: 100, 1: 100, 2: 10, 3: 10, 4:1, 5:1, 6:0.1, 7:0.1}
+  lr_dic = {0: tf.Variable(1e-1), 1: tf.Variable(1e-1), 2: tf.Variable(1e-2), 3: tf.Variable(1e-2), 4:tf.Variable(1e-3), 5:tf.Variable(1e-3), 6:tf.Variable(1e-4), 7:tf.Variable(1e-4), 8:tf.Variable(1), 9:tf.Variable(1)}
 
-  hidden_layers = layer_dic[task_id]
-  layers = [4]
+
+  hidden_layers = 5
+  layers = [3]
   for i in range(hidden_layers + 1):
-    layers.append(64) # todo test
+    layers.append(32) # todo test
   layers.append(1)
 
   print("layers: ", layers)
@@ -539,17 +640,19 @@ def main():
     os.makedirs(result_folder_name)
 
   # fixed parameters
-  logger = Logger(frequency=1000)
-  physics_scale = 1e-4
-  p_start = 0
-  p_end = 250
+  logger = Logger(frequency=1)
+  #physics_scale = 1e-4
+  p_start = 1
+  p_end = 3999#p_end_dic[task_id]
+  p_step = 0
+  p_iter = 0
   # parameters ########################################################################################################
   ppi = 0
-  max_iter_overall = 10_000#3000000
-  meta_epochs = 1 # todo without hard coded numbers
-  lr = tf.Variable(1e-4)
+  max_iter_overall = 20_000#900_000#3000000
+  meta_epochs = 1#max_iter_overall//p_iter # todo without hard coded numbers
+  lr =lr_dic[task_id] #tf.Variable(1e-4)
   tf_epochs_warm_up = 2000
-  tf_epochs_train = int(max_iter_overall / meta_epochs)
+  tf_epochs_train = p_iter#int(max_iter_overall / meta_epochs)
   tf_epochs = max_iter_overall
 
   mode_frame = False
@@ -557,175 +660,112 @@ def main():
     learning_rate=lr,
     beta_1=0.8, decay=0.)
 
-  experiment_name = "vanilla_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(hidden_layers) + "_pn_" + p_norm + "_af_" + af_str
+  experiment_name = "single_mass_vanilla_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(hidden_layers) + "_pn_" + p_norm + "_af_" + af_str + "_p_end_" +str(p_end)+ "p_step_" + str(p_step) + "_p_iter_"+ str(p_iter) +"_scl_" + str(scl) + "_pscale" + str(physics_scale) + "_lr_"+ str(lr.numpy()) + "_"+ str(task_id)
   os.makedirs(result_folder_name + "/"+ experiment_name, exist_ok=True)
   os.makedirs(result_folder_name + "/" + experiment_name+ "/plots", exist_ok=True)
   # data creation##########################################################################################################
-  scale_factor = 1
 
-  cPS = 1e6 * 4 # Stiffness Primary Suspension
-  dPS = 1e4 * 4 # Damping Primary Suspension
-  mDG = 3000
-  cSS = 0.5e6 * 2 # Stiffness Secondary Suspension
-  dSS = 1.5e4 * 2 # Stiffness Primary Suspension
-  mWK = 30000/2
-
-  cSF = cSS;
-  dSF = dSS
-  c = (cSF/mWK)
-  d = (dSF/mWK)
-
-  #Av = 5.9233e-7;
-  #Omc = 0.8246;
-  #Omr = 0.0206;
-  #Om = np.logspace(-2,1,100)
-  #Fs = 200
-  tExci = np.linspace(0, 10, 4000) #time
-  #Fs_Exci = 5*Fs;
-  #tExci_raw = np.linspace(0, 25, 25001)
-  #frequ = np.hstack((np.linspace(0.05,1.95,40), np.linspace(2,15,100)))
-  #for f1 in frequ:
-  #f1 = 15.
-  #Sz = (Av*Omc**2.)/ ((f1**2. +Omr**2)*(f1**2+Omc**2))
-  #z_raw = Sz * np.sin(tExci_raw*f1*2*np.pi)
-  #z_raw = z_raw * scale_factor
-
-  #u_raw = z_raw
-  #up_raw = np.diff(u_raw,prepend=0)
-  #up_raw = np.gradient(u_raw)# gradient vs diff?
-  #u_orig = np.expand_dims(u_raw,-1)
-  #up_orig = np.expand_dims(np.diff(np.squeeze(u_raw),prepend=0),-1)
-
-  #u_orig = np.expand_dims(np.interp(tExci,tExci_raw,u_raw),1) #todo why interpolation?
-  #up_orig = np.expand_dims(np.interp(tExci, tExci_raw,up_raw),1)
-
-  tExci =  np.expand_dims(tExci, 1)
-  u_orig = np.zeros_like(tExci)
-  up_orig = np.zeros_like(u_orig)
-  ################################################################################
-
-  A =  np.array([
-      [0, 1],
-      [-cSF/mWK, -dSF/mWK]])
-
-  B =  np.array(
-    [[0, 0],
-      [cSF/mWK, dSF/mWK]])
-
-
-  C = np.array([[1, 0]]) # extract x1 = position
-  D = np.zeros((1, 2))
-
-  OneMassOsci = sig.StateSpace(A,B,C,D)
-
-  sys_input = np.hstack((u_orig, up_orig))
-
-
-  tsim_nom_orig,y_orig,xsim_nom_orig = sig.lsim(OneMassOsci,sys_input,np.squeeze(tExci),X0=[1,0])
-
-  dy_orig = np.diff(y_orig,axis=0,prepend=0)
-  dy2_orig = np.diff(dy_orig,axis=0,prepend=0)
-  y_orig = np.expand_dims(y_orig, 1)
-  dy_orig = np.expand_dims(dy_orig, 1)
-  dy2_orig = np.expand_dims(dy2_orig, 1)
 
   start_vec = [1, 0]
-  m1 = 30000/2
-  css = 0.5e6 * 2
+  m1 = (30000/2)
+  css = (0.5e6 * 2)
   dss = 1.5e4 * 2
   exp_len = 4000
-  y_m1_simul, y_m1_dx_simul, y_m1_dx2_simul, u_simul, up_simul, tExci, simul_constants = get_simulated_data_single_mass(start_vec, end_time=10, steps=4000, exp_len=exp_len, m1=m1, css=css,dss=dss, debug_data=True)
+  steps = 4000
+  y_m1_simul, y_m1_dx_simul, y_m1_dx2_simul, u_simul, up_simul, tExci, simul_constants = get_simulated_data_single_mass(start_vec, end_time=10, steps=steps, exp_len=exp_len, m1=m1, css=css,dss=dss, debug_data=True)
+  m1, c, d = simul_constants
+  sol_hand = (-y_m1_dx2_simul) - (d / m1) * y_m1_dx_simul - (c / m1) * y_m1_simul
 
-  print(y_m1_simul.shape)
-  print(y_orig.shape)
-  print(np.allclose(y_m1_simul, y_orig))
-  print(np.allclose(y_m1_dx_simul, dy_orig)) # so wieso falsch kann ignoriert werden
-  #print(np.allclose(y_m1_dx2_simul, dy2_orig))
-  fig = plt.figure()
-  ax = fig.add_subplot(1,1,1)
-  plt.plot(tExci, y_orig, label="y_orig")
-  plt.plot(tExci, y_m1_simul, label="y_m1_simul")
-  #plt.plot(tExci, y_m1_dx_simul, label="y_m1_dx_simul")
-  #plt.plot(tExci, y_m1_dx2_simul, label="y_m1_dx2_simul")
+  fig_res = plt.figure(figsize=(16, 9))
+  plt.plot(sol_hand, label="p term hand")
+  fig_res.savefig(result_folder_name + "/" + experiment_name+ '/res_hand.svg', format='svg', dpi=1200)
 
-  plt.legend()
-  #plt.show()
-  fig.savefig(result_folder_name+"/" + experiment_name + '/test.png')
-  fig = plt.figure()
-  ax = fig.add_subplot(1,1,1)
-  plt.plot(tExci, y_m1_simul-y_orig, label="diff")
-  #plt.plot(tExci, y_m1_dx_simul, label="y_m1_dx_simul")
-  #plt.plot(tExci, y_m1_dx2_simul, label="y_m1_dx2_simul")
+  sol_hand2 = (-y_m1_dx2_simul / 1) - (dss / m1) * y_m1_dx_simul - (css / m1) * y_m1_simul + (dss / m1) * up_simul + (css / m1) * u_simul
 
-  plt.legend()
-  #plt.show()
-  fig.savefig(result_folder_name+"/" + experiment_name + '/test2.png')
-  assert False
+  fig_res = plt.figure(figsize=(16, 9))
+  plt.plot(sol_hand2, label="p term hand")
+  fig_res.savefig(result_folder_name + "/" + experiment_name+ '/res_hand2.svg', format='svg', dpi=1200)
 
   # Getting the data
   data_sampling = 10
   scaling_factor = 1#1e12
   num_points = 250
-  x_data = tExci[1:num_points+1:data_sampling]
-  y_data = y_orig[1:num_points+1:data_sampling]*scaling_factor
-  ym1_data = u_orig[0:num_points:data_sampling]*scaling_factor#np.zeros_like(x_data)#y_orig[0:num_points:data_sampling]*scaling_factor
-  y_lbl = y_orig[1:]*scaling_factor
-  ym1_lbl = u_orig[:-1]*scaling_factor#np.zeros_like(y_lbl)#y_orig[:-1]*scaling_factor
-  u_lbl = u_orig[1:]*scaling_factor
-  up_lbl = up_orig[1:]*scaling_factor
-  t = tExci[1:]
-  u_data = u_orig[1:num_points+1:data_sampling]*scaling_factor
-  u_dx_data = up_orig[1:num_points+1:data_sampling]*scaling_factor
-
-  input_all = tf.cast(tf.concat([t,u_lbl,up_lbl,ym1_lbl],axis=-1),tf.float32)
-  input_data_physics = input_all
-  input_data = tf.cast(tf.concat([x_data,u_data,u_dx_data,ym1_data],axis=-1),tf.float32)
-
-  loss_scale_term = np.exp(-(dSF)/(2*mWK)*t)
-  # plot and save data used
-  fig = plt.figure()
-  ax = fig.add_subplot(1,1,1)
-  plt.plot(t, y_lbl, label="Exact solution")
-  plt.scatter(x_data,y_data,c="r")
-  plt.plot(t, loss_scale_term, label="exp(-(dSF)/(2*m)*t)")
-  plt.legend()
-  #plt.show()
-  fig.savefig(result_folder_name+"/" + experiment_name + '/exact_solution.png')
+  data_start = 0
 
 
-  fig = plt.figure()
-  ax = fig.add_subplot(1,1,1)
-  plt.plot(t[:500], y_lbl[:500], label="Exact solution close-up")
-  plt.plot(t[:500], ym1_lbl[:500], label="Previous step close-up")
-  plt.scatter(x_data,y_data,c="r")
-  plt.legend()
-  #plt.show()
-  fig.savefig(result_folder_name + "/" + experiment_name + '/exact_solution_close_up.png')
+  # Getting the data
 
-  fig = plt.figure()
-  ax = fig.add_subplot(1,1,1)
-  plt.plot(t[:500], u_orig[:500]*scaling_factor, label="u close-up")
-  plt.scatter(x_data,u_data,c="r")
-  plt.legend()
-  #plt.show()
-  fig.savefig(result_folder_name + "/" + experiment_name + '/u_close_up.png')
+  x_data = np.expand_dims(tExci[data_start], 1)
+  y_data = np.expand_dims(y_m1_simul[data_start]*scaling_factor, 1)
+  y_lbl = y_m1_simul[data_start:]*scaling_factor
+  u_lbl = u_simul[data_start:]*scaling_factor
+  up_lbl = up_simul[data_start:]*scaling_factor
+  t = tExci[data_start:]
+  u_data = np.expand_dims(u_simul[data_start], 1)*scaling_factor
+  u_dx_data = np.expand_dims(up_simul[data_start], 1) *scaling_factor
+
+  input_all = tf.cast(tf.concat([t,u_lbl,up_lbl],axis=-1),tf.float32)
+  input_data = tf.cast(tf.concat([x_data,u_data,u_dx_data],axis=-1),tf.float32)
+
+  loss_scale_term = np.exp(-(dss)/(2*m1)*t)
+
+  plot_solution(t, y_lbl, x_data, y_data, None,p_end, result_folder_name+"/" + experiment_name + '/exact_solution')
+  plot_solution(t, y_lbl/loss_scale_term, x_data, y_data, None,p_end, result_folder_name+"/" + experiment_name + '/exact_solution_scaled')
+
 
 
 
   def error():
     y, f = pinn.predict(input_all)
-    return np.mean((y_lbl - y)**2),np.mean(f**2), np.mean(loss_scale_term*((y_lbl - y)**2)), np.mean(loss_scale_term*(f**2))
+    return np.mean((y_lbl - y)**2),np.mean(f**2), np.mean(((y_lbl - y)**2)/loss_scale_term), np.mean((f**2)/loss_scale_term)
   logger.set_error_fn(error)
+
+
+  def store_intermediate():
+    with open(result_folder_name + "/" + experiment_name + "/ea_mean_lst.pkl", "wb") as fp:
+      pickle.dump(pinn.ea_mean_lst, fp)
+
+    with open(result_folder_name + "/" + experiment_name + "/ea_median_lst.pkl", "wb") as fp:
+      pickle.dump(pinn.ea_median_lst, fp)
+
+    with open(result_folder_name + "/" + experiment_name + "/ea_mean_data_lst.pkl", "wb") as fp:
+      pickle.dump(pinn.ea_mean_data_lst, fp)
+
+    with open(result_folder_name + "/" + experiment_name + "/ea_median_data_lst.pkl", "wb") as fp:
+      pickle.dump(pinn.ea_median_data_lst, fp)
+
+    with open(result_folder_name + "/" + experiment_name + "/loss.pkl", "wb") as fp:
+      pickle.dump(logger.loss_over_meta, fp)
+    with open(result_folder_name + "/" + experiment_name + "/loss_epoch.pkl", "wb") as fp:
+      pickle.dump(logger.loss_over_epoch, fp)
+    with open(result_folder_name + "/" + experiment_name + "/p_end.pkl", "wb") as fp:
+      pickle.dump([p_start, p_end], fp)
+
+    pinn.model.save_weights(result_folder_name + "/" + experiment_name + "/_weights")
+
+    plot_loss(logger.loss_over_epoch, physics_scale, result_folder_name + "/" + experiment_name + '/loss', False)
+    plot_loss(logger.loss_over_epoch, physics_scale, result_folder_name + "/" + experiment_name + '/loss_scaled', True)
+    plot_loss(logger.loss_over_epoch, physics_scale, result_folder_name + "/" + experiment_name + '/loss_exp', False,
+              True)
+    plot_loss(logger.loss_over_epoch, physics_scale, result_folder_name + "/" + experiment_name + '/loss_exp_scaled',
+              True, True)
+
+    y_pred, f_pred = pinn.predict(input_all)
+
+    plot_solution(t, y_lbl, x_data, y_data, y_pred, p_end, result_folder_name + "/" + experiment_name + '/res')
+    plot_terms_diff(t, f_pred, y_pred, y_lbl, result_folder_name + "/" + experiment_name + '/res_error_all',
+                    p_plot_start=0)
+    plt.close('all')
 
   print("Frame mode: ", str(mode_frame))
   print("ppi", ppi)
 
 
-  pinn = PhysicsInformedNN(layers, h_activation_function= act_func, optimizer=tf_optimizer, logger=logger,c=c,d=d,n_inputs=layers[0],
+  pinn = PhysicsInformedNN(layers, h_activation_function= act_func, optimizer=tf_optimizer, logger=logger, m=simul_constants[0], c=simul_constants[1], d=simul_constants[2], n_inputs=layers[0],
                            scaling_factor=scaling_factor,physics_scale=physics_scale, p_norm=p_norm)
 
-  y_pred, f_pred = pinn.predict(input_all)
-  print(input_all.shape)
+  pinn.set_save_intermediate(store_intermediate)
+
 
   try_next_semi_points = False
   input_data_semi, y_data_semi, y_data_semi_pseudo, pseudo_physics_norm, input_data_semi_new_pot, semi_candidates = None, None, None, None, None, None
@@ -736,25 +776,27 @@ def main():
           show_summary = True
       else:
           show_summary = False
+      p_end = np.minimum(p_end+100, steps-1)
+      print(p_end)
+      input_data_physics = tf.cast(tf.concat([t[p_start:p_end], u_lbl[p_start:p_end], up_lbl[p_start:p_end]], axis=-1),
+                                   tf.float32)
 
-      pinn.fit(input_data, y_data,input_data_physics,input_data_semi, y_data_semi_pseudo, pseudo_physics_norm, tf_epochs, show_summary=show_summary)
-      if (i + 1) % 100 == 0 or i == 0:
-        y_pred, f_pred = pinn.predict(input_all)
-        fig_res = plt.figure()
-        plt.plot(t, y_pred)
-        plt.scatter(x_data, y_data, c='r')
-        plt.plot(t, y_lbl)
-        plt.axvline(t[p_start], c='g')
-        plt.axvline(t[p_end], c='r')
-        plt.scatter(x_data, y_data, c='r')
-        fig_res.savefig(result_folder_name + "/" + experiment_name + "/plots/" +str(i+1)+ '.png')
-        with open(result_folder_name + "/" + experiment_name + "/loss.pkl", "wb") as fp:
-          pickle.dump(logger.loss_over_meta, fp)
-        with open(result_folder_name + "/" + experiment_name + "/loss_epoch.pkl", "wb") as fp:
-          pickle.dump(logger.loss_over_epoch, fp)
-        with open(result_folder_name + "/" + experiment_name + "/p_end.pkl", "wb") as fp:
-          pickle.dump([p_start, p_end], fp)
+      ea_mean_lst, ea_median_lst, ea_mean_data_lst, ea_median_data_lst = pinn.fit(input_data, y_data,input_data_physics,input_data_semi, y_data_semi_pseudo, pseudo_physics_norm, tf_epochs, show_summary=show_summary)
 
+
+
+
+  with open(result_folder_name + "/" + experiment_name + "/ea_mean_lst.pkl", "wb") as fp:
+    pickle.dump(ea_mean_lst, fp)
+
+  with open(result_folder_name + "/" + experiment_name + "/ea_median_lst.pkl", "wb") as fp:
+    pickle.dump(ea_median_lst, fp)
+
+  with open(result_folder_name + "/" + experiment_name + "/ea_mean_data_lst.pkl", "wb") as fp:
+    pickle.dump(ea_mean_data_lst, fp)
+
+  with open(result_folder_name + "/" + experiment_name + "/ea_median_data_lst.pkl", "wb") as fp:
+    pickle.dump(ea_median_data_lst, fp)
 
   with open(result_folder_name + "/" + experiment_name + "/loss.pkl", "wb") as fp:
     pickle.dump(logger.loss_over_meta, fp)
@@ -766,50 +808,25 @@ def main():
   pinn.model.save_weights(result_folder_name + "/" + experiment_name +"/_weights")
 
 
-  fig_l = plt.figure()
-  plt.title("Loss over epochs")
-  plt.plot([l[0] for l in logger.loss_over_epoch], label='data_error')
-  plt.plot([l[1] for l in logger.loss_over_epoch], label='physics_error')
-  plt.yscale("log")
-  plt.legend()
-  fig_l.savefig(result_folder_name + "/" + experiment_name + '/_loss.png')
-  #plt.show()
 
-  fig_s = plt.figure()
-  plt.title("Loss over epochs scaled")
-  plt.plot([l[0] for l in logger.loss_over_epoch], label='data_error')
-  plt.plot([l[1]*physics_scale for l in logger.loss_over_epoch], label='physics_error')
-  plt.yscale("log")
-  plt.legend()
-  fig_s.savefig(result_folder_name + "/" + experiment_name + '/_loss_s.png')
 
-  fig_l = plt.figure()
-  plt.title("Loss over epochs exp scaled")
-  plt.plot([l[2] for l in logger.loss_over_epoch], label='data_error')
-  plt.plot([l[3] for l in logger.loss_over_epoch], label='physics_error')
-  plt.yscale("log")
-  plt.legend()
-  fig_l.savefig(result_folder_name + "/" + experiment_name + '/loss_exp.png')
-  #plt.show()
+  plot_loss(logger.loss_over_epoch, physics_scale, result_folder_name+"/" + experiment_name + '/loss', False)
+  plot_loss(logger.loss_over_epoch, physics_scale, result_folder_name+"/" + experiment_name + '/loss_scaled', True)
+  plot_loss(logger.loss_over_epoch, physics_scale, result_folder_name+"/" + experiment_name + '/loss_exp', False, True)
+  plot_loss(logger.loss_over_epoch, physics_scale, result_folder_name+"/" + experiment_name + '/loss_exp_scaled', True, True)
 
-  fig_s = plt.figure()
-  plt.title("Loss over epochs scaled +  exp scaled")
-  plt.plot([l[2] for l in logger.loss_over_epoch], label='data_error')
-  plt.plot([l[3]*physics_scale for l in logger.loss_over_epoch], label='physics_error')
-  plt.yscale("log")
-  plt.legend()
-  fig_s.savefig(result_folder_name + "/" + experiment_name + '/loss_s_exp.png')
 
   y_pred, f_pred = pinn.predict(input_all)
 
-  fig_res = plt.figure()
-  plt.plot(t, y_pred)
-  plt.scatter(x_data, y_data, c='r')
-  plt.plot(t, y_lbl)
-  plt.axvline(t[p_start], c='g')
-  plt.axvline(t[p_end], c='r')
-  plt.scatter(x_data, y_data, c='r')
-  fig_res.savefig(result_folder_name + "/" + experiment_name + '/_res.png')
+  plot_solution(t, y_lbl, x_data, y_data, y_pred,p_end, result_folder_name+"/" + experiment_name + '/res')
+  plot_terms_diff(t, f_pred, y_pred, y_lbl, result_folder_name+"/" + experiment_name + '/res_error_all' , p_plot_start=0)
+
+  f_pred, y_m1, y_m1_dx, y_m1_dx2 = pinn.f_model_detail(input_all)
+  plot_terms_detail(t, y_m1, y_lbl, y_m1_dx, y_m1_dx_simul, y_m1_dx2, y_m1_dx2_simul, f_path_name=result_folder_name+"/" + experiment_name + "/res_error_detail_after")
+
+  f_pred, y_m1, y_m1_dx, y_m1_dx2 = pinn.f_model_detail(input_all)
+  plot_terms_detail(t, y_m1, y_lbl, y_m1_dx, y_m1_dx_simul, y_m1_dx2, y_m1_dx2_simul, f_path_name=result_folder_name+"/" + experiment_name + "/res_error_detail_after2")
+
 
   print("Finished")
 
