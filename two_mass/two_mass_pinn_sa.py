@@ -13,8 +13,8 @@ from numpy.random import random
 from data_simulation import get_simulated_data_two_mass
 from plot_two_mass import plot_solution, plot_terms_detail, plot_loss, plot_terms_diff
 
-np.random.seed(12345)
-tf.random.set_seed(12345)
+#np.random.seed(12345)
+#tf.random.set_seed(12345)
 
 
 class Logger(object):
@@ -49,8 +49,8 @@ class Logger(object):
         if epoch % self.print_freq == 0:
             if not epoch % self.save_loss_freq == 0:
                 data_error_m1, data_error_m2, physics_error_m1, physics_error_m2 = [m.numpy() for m in log_data]
-            print(
-                f"{'tf_epoch'} = {epoch:6d}  elapsed = {self.__get_elapsed()}  train loss = {loss.numpy():.4e}  data error m1= {data_error_m1:.4e}  data error m2= {data_error_m2:.4e} physics error m1 = {physics_error_m1:.4e}  physics error m2 = {physics_error_m2:.4e} ")
+            #print(f"{'tf_epoch'} = {epoch:6d}  elapsed = {self.__get_elapsed()}  train loss = {loss.numpy():.4e}  data error m1= {data_error_m1:.4e}  data error m2= {data_error_m2:.4e} physics error m1 = {physics_error_m1:.4e}  physics error m2 = {physics_error_m2:.4e} ")
+            print(f"{'tf_epoch'} = {epoch:6d}  elapsed = {self.__get_elapsed()}  train loss = {loss.numpy():.4e}  data error m1= {data_error_m1:.4e}  data error m2= {data_error_m2:.4e} physics error m1 = {physics_error_m1:.4e}  physics error m2 = {physics_error_m2:.4e} ")
 
     def log_train_end(self, epoch, log_data):
         print("==================")
@@ -63,8 +63,12 @@ class PhysicsInformedNN(object):
     def __init__(self, layers, h_activation_function, logger, simul_constants, domain, physics_scale, lr, data,
                  simul_results, storage_path):
 
-        self.model = tf.keras.Sequential()
-        self.setup_layers(layers, h_activation_function)
+        if h_activation_function == "sine_all":
+            inputs, outputs = self.setup_layers2(layers, h_activation_function)
+            self.model = tf.keras.Model(inputs=inputs, outputs=outputs, name="concat_model")
+        else:
+            self.model = tf.keras.Sequential()
+            self.setup_layers(layers, h_activation_function)
 
         self.storage_path = storage_path
         self.dtype = tf.float32
@@ -89,15 +93,31 @@ class PhysicsInformedNN(object):
         self.collocation_cuts = []
 
         # SA- https://github.com/levimcclenny/SA-PINNs
-        self.physics_weights_1 = tf.Variable(tf.random.uniform([self.x_physics.shape[0], 1], dtype=self.dtype))
-        self.physics_weights_2 = tf.Variable(tf.random.uniform([self.x_physics.shape[0], 1], dtype=self.dtype))
-        self.data_weights_1 = tf.Variable(tf.random.uniform([self.x_ic.shape[0], 1], dtype=self.dtype))  # todo not hard coded
-        self.data_weights_2 = tf.Variable(tf.random.uniform([self.x_ic.shape[0], 1], dtype=self.dtype))
+        self.physics_weights_1 =  tf.Variable(tf.random.uniform([self.x_physics.shape[0], 1], dtype=self.dtype))
+        self.physics_weights_2 =  tf.Variable(tf.random.uniform([self.x_physics.shape[0], 1], dtype=self.dtype))
+        self.data_weights_1 =  tf.Variable(tf.random.uniform([self.x_ic.shape[0], 1], dtype=self.dtype))
+        self.data_weights_2 =  tf.Variable(tf.random.uniform([self.x_ic.shape[0], 1], dtype=self.dtype))
 
         print("weight")
         print(self.physics_weights_1.shape)
         print(self.data_weights_1.shape)
 
+    def setup_layers2(self, layers, h_activation_function):
+        inputs = tf.keras.Input(shape=(layers[0],))
+        x = inputs
+        for count, width in enumerate(layers[1:-1]):
+            if h_activation_function == "sine_all":
+                print(width, ": sine af")
+                x = tf.keras.layers.Dense(width, activation=tf.math.sin)(x)
+            else:
+                print(width, ": tanh af")
+                x = tf.keras.layers.Dense(width, activation=tf.keras.activations.tanh)(x)
+            #x = tf.keras.layers.Concatenate(axis=1)([x, inputs])
+        print("Output layer:")
+        print(layers[-1], ": no af")
+        outputs = tf.keras.layers.Dense(layers[-1], activation=None)(x)
+
+        return inputs, outputs
     def setup_layers(self, layers, h_activation_function):
         self.model.add(tf.keras.layers.InputLayer(input_shape=(layers[0],)))
         print("Input Layer + Hidden Layers")
@@ -198,6 +218,16 @@ class PhysicsInformedNN(object):
 
     def calc_loss_ic(self):
         diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)
+        #diff = self.y_lbl_ic - tf.concat((pred_y, pred_dy),axis=1) orig alex
+        diff_m1 = self.data_weights_1**2 * tf.square(diff[0, 0]) # todo alex fragen warum beides vorher squaren, warum loop überbleibsel? ic_loss würde nur auf das letzte gesetzt werden
+        diff_m1_dx = 0.0#self.data_weights_1[:,1,ct]**2 * tf.square(diff[0, 2])
+        diff_m2 = self.data_weights_2**2 * tf.square(diff[0, 1])
+        diff_m2_dx = 0.0#self.data_weights_2[:,1,ct]**2 * tf.square(diff[0, 3]) #faster convergence without dx loss (covered via physics loss)
+        ic_loss = tf.reduce_mean(diff_m1+diff_m2+diff_m1_dx+diff_m2_dx)
+
+        return ic_loss
+    def calc_loss_ic_martin_old(self):
+        diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)
         diff_m1 = self.data_weights_1 * diff[0, 0]
         diff_m1_dx = self.data_weights_1 * diff[0, 2]
         diff_m2 = self.data_weights_2 * diff[0, 1]
@@ -205,10 +235,21 @@ class PhysicsInformedNN(object):
         ic_loss = tf.reduce_mean(tf.square(tf.concat((diff_m1, diff_m2, diff_m1_dx, diff_m2_dx), axis=1)))
         return ic_loss
 
-    def calc_physics_loss(self, x_col):
+    def calc_physics_loss(self, x_col): # changed to sqauring weights and loss before multiplying
         m1_loss, m2_loss = self.f_model(x_col)
-        m1_loss_mean = tf.reduce_mean(tf.square(self.physics_weights_1*m1_loss))
-        m2_loss_mean = tf.reduce_mean(tf.square(self.physics_weights_2*m2_loss))
+        m1_loss_mean = tf.reduce_mean(tf.square(self.physics_weights_1)*tf.square(m1_loss))
+        m2_loss_mean = tf.reduce_mean(tf.square(self.physics_weights_2)*tf.square(m2_loss))
+        return [m1_loss_mean, m2_loss_mean]
+
+    def calc_loss_ic_old(self):
+        diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)
+        ic_loss = tf.reduce_mean(tf.square(diff))
+        return ic_loss
+
+    def calc_physics_loss_old(self, x_col):
+        m1_loss, m2_loss = self.f_model(x_col)
+        m1_loss_mean = tf.reduce_mean(tf.square(m1_loss))
+        m2_loss_mean = tf.reduce_mean(tf.square(m2_loss))
         return [m1_loss_mean, m2_loss_mean]
 
     @tf.function
@@ -219,7 +260,7 @@ class PhysicsInformedNN(object):
 
             # physics loss
             m1_p_loss, m2_p_loss = self.calc_physics_loss(x_col)
-            combined_weighted_loss = data_loss + self.physics_scale * (m1_p_loss + m2_p_loss)
+            combined_weighted_loss = data_loss + (self.physics_scale * (m1_p_loss + m2_p_loss))
 
             # retrieve gradients
         grads = tape.gradient(combined_weighted_loss, self.model.weights)
@@ -248,6 +289,7 @@ class PhysicsInformedNN(object):
     def fit(self):
         self.logger.log_train_start(self)
         for epoch in range(self.tf_epochs):
+            #loss_value, log_data, pred_parameters, physics_losses = self.train_step(self.sample_collocation_points(1_000))
             loss_value, log_data, pred_parameters, physics_losses = self.train_step(self.x_physics)
 
             # log train loss and errors specified in logger error
@@ -272,58 +314,74 @@ def get_layer_list(nr_inputs, nr_outputs, nr_hidden_layers, width):
 
 
 def main():
-    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    task_id = int(sys.argv[1])
+    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    #task_id = int(sys.argv[1])
     print("task_id: ", task_id)
 
     # Parameters that change based on task id ############################################################################
     if task_id % 2 == 0:
-        act_func = "tanh"
-        af_str = "tanh"
+        act_func = "sine_all"
+        af_str = "sine_all"
     else:
         act_func = "sine"
         af_str = "sin"
 
-    if task_id <= 5:
-        lr = tf.Variable(1e-4)
-    else:
-        lr = tf.Variable(1e-5)
+    ic_points_idx = [0]
+    d_p_string = "vanilla_sa"
+    '''
+    if task_id <= 1:
+      ic_points_idx = [7499]
+      d_p_string = "end"
+    elif 1 < task_id <= 3:
+      ic_points_idx = [0, 7499]
+      d_p_string = "start_end"
+    elif 3 < task_id <= 5:
+      ic_points_idx = [x for x in range(0, 7499, 500)]
+      d_p_string = "cont"
+    '''
+    lr = tf.Variable(1e-4)
+    print("ic points: ", ic_points_idx)
+    hidden_layers = 7
 
-    hidden_layers = 5
+    weight_factor = 2
 
-    p_scl_dic = {0: tf.Variable(1e-4), 1: tf.Variable(1e-4), 2: tf.Variable(1e-5), 3: tf.Variable(1e-5),
-                 4: tf.Variable(1e-6), 5: tf.Variable(1e-6),
-                 6: tf.Variable(1e-4), 7: tf.Variable(1e-4), 8: tf.Variable(1e-5), 9: tf.Variable(1e-5),
-                 10: tf.Variable(1e-6), 11: tf.Variable(1e-6)}
-
-    physics_scale = p_scl_dic[task_id]
+    physics_scale = tf.Variable(1e-6)
+    data_loss_scl = tf.Variable(1.0)
     ######################################################################################################################
     # Fixed parameters PINN
-    training_epochs = 20_000#1_200_000
+    training_epochs = 1_200_000
     width = 128
     layers = get_layer_list(nr_inputs=1, nr_outputs=2, nr_hidden_layers=hidden_layers, width=width)
+
+    # save_loss_freq = how often test error is saved
     logger = Logger(save_loss_freq=1, print_freq=1_000)
 
     # Data simulation
-    weight_factor = 2
-    css = 0.5e6 * 2 #(0.5e8 * 2)  # (0.5e8 * 2)  # orig: 0.5e6 * 2
-    dss = 1.5e4 * 2 #(1.5e3 * 2)  # (1.5e3 * 2)  # orig: 1.5e4 * 2
-    m2 = 15_000 #3_000  # 3_000  # orig : 15_000 * weight_factor
-    m1 = 3_000 * 20#15_000 * weight_factor  # 15_000 * weight_factor
-    x_d = [0, 6]
-    exp_len = 7_500//10  # 1_500
-    steps = 100_000//10
-    css = 0.5e6 * 2  # (0.5e8 * 2)  # orig: 0.5e6 * 2
-    dss = 1.5e4 * 2  # (1.5e3 * 2)  # orig: 1.5e4 * 2
-    m2 = 15_000  # 3_000  # orig : 15_000 * weight_factor
-    m1 = 3_000  # 15_000 * weight_factor
-    end = 6
-    exp_len = 750
-    steps = 4_001
+    # weight_factor = 0.0002
+    c2_in = (0.5e8 * 2)
+    d2_in = (1.5e3 * 2)
+    m2 = 3_000
+    m1 = 15_000 * 2
+    x_d = [0, 20]  # time domain of simulation
+    exp_len = 7_500  # number of points are used in training / testing the PINN
+    steps = 100_000  # number of steps in time domain
 
-    start_vec = [1.0, 0.0, 0.5, 0.0]
+    ###
+    #weight_factor = 20
+    #x_d = [0, 6]
+    #c2_in = 0.5e6 * 2  # (0.5e8 * 2)  # orig: 0.5e6 * 2
+    #d2_in = 1.5e4 * 2  # (1.5e3 * 2)  # orig: 1.5e4 * 2
+    #m2 = 15_000  # 3_000  # orig : 15_000 * weight_factor
+    #m1 = 3_000  # 15_000 * weight_factor
+    #end = 6
+    #exp_len = 750
+    #steps = 4_001
+
+    ###
+
+    start_vec = [1.0, 0.0, 0.5, 0.0]  # pos m2, dx pos m2, pos m1, dx pos m1
     simul_results, simul_constants = get_simulated_data_two_mass(start_vec, end_time=x_d[1], steps=steps,
-                                                                 exp_len=exp_len, m1=m1, m2=m2, css=css, dss=dss,
+                                                                 exp_len=exp_len, m1=m1, m2=m2, css=c2_in, dss=d2_in,
                                                                  debug_data=True)
     y_m2_simul, y_m2_dx_simul, y_m2_dx2_simul, y_m1_simul, y_m1_dx_simul, y_m1_dx2_simul, u_simul, up_simul, tExci = simul_results
     m2, m1, c1, d1, c2, d2 = simul_constants
@@ -337,22 +395,22 @@ def main():
     domain = [t[0], t[-1]]
 
     # ic condition
-    x_data = np.expand_dims(tExci[data_start], 1)
-    y_data_m1 = np.expand_dims(y_m1_simul[data_start], 1)
-    y_data_m2 = np.expand_dims(y_m2_simul[data_start], 1)
+    x_data = tExci[ic_points_idx]
+    y_data_m1 = y_m1_simul[ic_points_idx]
+    y_data_m2 = y_m2_simul[ic_points_idx]
 
-    y_data_all = np.hstack((y_data_m1, y_data_m2, np.array([0.0], ndmin=2),
-                            np.array([0.0], ndmin=2)))  # pos m1 (lower mass), pos m2, dx pos m1, dx pos m2
+    y_data_all = np.hstack((y_data_m1, y_data_m2, y_m1_dx_simul[ic_points_idx],
+                            y_m2_dx_simul[ic_points_idx]))  # pos m1 (lower mass), pos m2, dx pos m1, dx pos m2
     input_data = tf.cast(x_data, tf.float32)
 
     # define data sets
     input_data_physics = tf.cast(t[p_start_step:exp_len:p_sampling_rate], tf.float32)
     x_ic = tf.constant(input_data, dtype=tf.float32)
     y_lbl_ic = tf.constant(y_data_all, dtype=tf.float32)
-    x_physics = tf.convert_to_tensor(input_data_physics, dtype=tf.float32)
-    tf_epochs = training_epochs
+    x_physics = tf.convert_to_tensor(input_data_physics,
+                                     dtype=tf.float32)  # not used in the moment since we randomly sample physic points
 
-    # input for loss computation
+    # test set, used to calcualte logged loss not used in training
     y_lbl_m1 = y_m1_simul[data_start:]
     y_lbl_m2 = y_m2_simul[data_start:]
     y_lbl_all = np.hstack((y_lbl_m1, y_lbl_m2))
@@ -360,12 +418,13 @@ def main():
     input_all = tf.convert_to_tensor(t, dtype=tf.float32)
     pinn_data = [x_ic, y_lbl_ic, x_physics, input_all, y_lbl_all]
 
-    # Setting up folder structure
+    # Setting up folder structure # todo clean up
     result_folder_name = 'res'
     os.makedirs(result_folder_name, exist_ok=True)
-    experiment_name = "two_mass_sa_h_l_" + str(hidden_layers) + "_w_" + str(
+    experiment_name = "two_mass_sa_martin_tc_fixeds_h_l_" + str(hidden_layers) + "_w_" + str(
         width) + "_af_" + af_str + "_lr_" + str(lr.numpy()) + "_expl_" + str(exp_len) + "_steps_" + str(
-        steps) + "_ps_" + str(physics_scale.numpy()) + "_wf_" + str(weight_factor) + "_id_" + str(task_id)
+        steps) + "_ds_" + str(data_loss_scl.numpy()) + "_ps_" + str(physics_scale.numpy()) + "_wf_" + str(
+        weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)
     print("Config name: ", experiment_name)
     os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
     os.makedirs(result_folder_name + "/" + experiment_name + "/plots", exist_ok=True)

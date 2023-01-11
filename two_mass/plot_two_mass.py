@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import pickle
 
 
+
 def plot_solution(t, y_lbl_m2, y_lbl_m1, x_data, y_data_m2, y_data_m1, y_pred, f_path_name, epoch=None):
     fig_res = plt.figure(figsize=(16, 9))
     if epoch is not None:
@@ -72,6 +73,23 @@ def plot_loss(loss_over_epoch, physics_scale, f_path_name, scaled):
 
     if scaled:
         plt.plot([l[2] * physics_scale for l in loss_over_epoch], label='physics_error m1')
+        plt.plot([l[3] * physics_scale for l in loss_over_epoch], label='physics_error m2')
+    else:
+        plt.plot([l[2] for l in loss_over_epoch], label='physics_error m1')
+        plt.plot([l[3] for l in loss_over_epoch], label='physics_error m2')
+    plt.yscale("log")
+    plt.legend()
+    fig_s.savefig(f_path_name + '.svg', format='svg', dpi=1200)
+
+def plot_loss_scale(loss_over_epoch, physics_scale, f_path_name, scaled, p1_scale, d1_scale):
+    fig_s = plt.figure()
+    plt.title("Loss over meta epochs, scaled=" +str(scaled))
+
+    plt.plot([l[0] * d1_scale for l in loss_over_epoch], label='data_error m1')
+    plt.plot([l[1] for l in loss_over_epoch], label='data_error m2')
+
+    if scaled:
+        plt.plot([l[2] * physics_scale * p1_scale for l in loss_over_epoch], label='physics_error m1')
         plt.plot([l[3] * physics_scale for l in loss_over_epoch], label='physics_error m2')
     else:
         plt.plot([l[2] for l in loss_over_epoch], label='physics_error m1')

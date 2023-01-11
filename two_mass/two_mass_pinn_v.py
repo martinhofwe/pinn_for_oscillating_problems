@@ -59,7 +59,7 @@ class Logger(object):
 
 
 class PhysicsInformedNN(object):
-  def __init__(self, layers, h_activation_function, logger,simul_constants ,domain, physics_scale,data_scale, lr, data, simul_results, storage_path):
+  def __init__(self, layers, h_activation_function, logger,simul_constants ,domain, physics_scale,data_scale, lr, data, simul_results, storage_path, task_id):
     
     self.model = tf.keras.Sequential()
     self.setup_layers(layers, h_activation_function)
@@ -78,7 +78,9 @@ class PhysicsInformedNN(object):
     self.x_ic, self.y_lbl_ic, self.x_physics, self.input_all, self.y_lbl_all = data
     self.y_m2_simul, self.y_m2_dx_simul, self.y_m2_dx2_simul, self.y_m1_simul, self.y_m1_dx_simul, self.y_m1_dx2_simul, _, _, _ = simul_results
     self.scaling_factor = tf.constant(1.0,dtype=self.dtype)
+
     self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.8, decay=0.)
+
     self.logger = logger
     self.physics_scale = physics_scale
     self.data_loss_scl = data_scale
@@ -245,19 +247,33 @@ def main():
   print("task_id: ", task_id)
 
   # Parameters that change based on task id ############################################################################
-  if task_id == 0:
-   act_func = "tanh"
-   af_str = "tanh"
-  elif task_id == 1:
-   act_func = "sine"
-   af_str = "sin"
+  if task_id % 2 == 0:
+    act_func = "tanh"
+    af_str = "tanh"
+  else:
+    act_func = "sine"
+    af_str = "sin"
 
+  ic_points_idx = [0]
+  d_p_string = "vanilla"
+  '''
+  if task_id <= 1:
+    ic_points_idx = [7499]
+    d_p_string = "end"
+  elif 1 < task_id <= 3:
+    ic_points_idx = [0, 7499]
+    d_p_string = "start_end"
+  elif 3 < task_id <= 5:
+    ic_points_idx = [x for x in range(0, 7499, 500)]
+    d_p_string = "cont"
+  '''
   lr = tf.Variable(1e-4)
-
+  print("ic points: ", ic_points_idx)
   hidden_layers = 10
 
-  p_scl_dic = {0: tf.Variable(1e-1), 1: tf.Variable(1e-3), 2: tf.Variable(1e-5),
-               3: tf.Variable(1e-1), 4: tf.Variable(1e-3), 5: tf.Variable(1e-5)}
+
+
+  weight_factor = 2
 
   physics_scale = tf.Variable(1e-6)
   data_loss_scl = tf.Variable(1.0)
@@ -271,14 +287,27 @@ def main():
   logger = Logger(save_loss_freq=1, print_freq=1_000)
 
   # Data simulation
-  weight_factor = 2
-  c2_in = 0.5e8 * 2
-  d2_in = 1.5e3 * 2
+  #weight_factor = 0.0002
+  c2_in = (0.5e8 * 2)
+  d2_in = (1.5e3 * 2)
   m2 = 3_000
-  m1 = 15_000 * weight_factor
+  m1 = 15_000 * 2
   x_d = [0, 20]  # time domain of simulation
   exp_len = 7_500  # number of points are used in training / testing the PINN
   steps = 100_000  # number of steps in time domain
+
+  ###
+  weight_factor = 20
+  x_d = [0, 6]
+  c2_in = 0.5e6 * 2  # (0.5e8 * 2)  # orig: 0.5e6 * 2
+  d2_in = 1.5e4 * 2  # (1.5e3 * 2)  # orig: 1.5e4 * 2
+  m2 = 15_000  # 3_000  # orig : 15_000 * weight_factor
+  m1 = 3_000  # 15_000 * weight_factor
+  end = 6
+  exp_len = 750
+  steps = 4_001
+
+  ###
 
   start_vec = [1.0, 0.0, 0.5, 0.0] # pos m2, dx pos m2, pos m1, dx pos m1
   simul_results, simul_constants = get_simulated_data_two_mass(start_vec, end_time=x_d[1], steps=steps, exp_len=exp_len, m1=m1, m2=m2, css=c2_in,dss=d2_in,debug_data=True)
@@ -291,14 +320,15 @@ def main():
   p_sampling_rate = 1
   data_start = 0
   t = tExci[data_start:]
-  domain = [t[0], t[-1]] # domain used to sample physics collocation points from
+  domain = [t[0], t[-1]]
 
   # ic condition
-  x_data = np.expand_dims(tExci[data_start], 1)
-  y_data_m1 = np.expand_dims(y_m1_simul[data_start], 1)
-  y_data_m2 = np.expand_dims(y_m2_simul[data_start], 1)
+  x_data = tExci[ic_points_idx]
+  y_data_m1 = y_m1_simul[ic_points_idx]
+  y_data_m2 = y_m2_simul[ic_points_idx]
 
-  y_data_all = np.hstack((y_data_m1, y_data_m2, np.array([0.0], ndmin=2), np.array([0.0], ndmin=2)))# pos m1 (lower mass), pos m2, dx pos m1, dx pos m2
+
+  y_data_all = np.hstack((y_data_m1, y_data_m2, y_m1_dx_simul[ic_points_idx], y_m2_dx_simul[ic_points_idx]))# pos m1 (lower mass), pos m2, dx pos m1, dx pos m2
   input_data = tf.cast(x_data, tf.float32)
 
   # define data sets
@@ -319,7 +349,7 @@ def main():
   # Setting up folder structure # todo clean up
   result_folder_name = 'res'
   os.makedirs(result_folder_name, exist_ok=True)
-  experiment_name = "two_mass_vanilla_sampling_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_af_" + af_str + "_lr_" + str(lr.numpy())+ "_expl_" + str(exp_len)+ "_steps_" + str(steps) +"_ds_" + str(data_loss_scl.numpy())+ "_ps_" + str(physics_scale.numpy())+ "_wf_" + str(weight_factor) + "_id_" + str(task_id)
+  experiment_name = "two_mass_vanilla_sampling_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_af_" + af_str + "_lr_" + str(lr.numpy())+ "_expl_" + str(exp_len)+ "_steps_" + str(steps) +"_ds_" + str(data_loss_scl.numpy())+ "_ps_" + str(physics_scale.numpy())+ "_wf_" + str(weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)
   print("Config name: ", experiment_name)
   os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
   os.makedirs(result_folder_name + "/" + experiment_name+ "/plots", exist_ok=True)
@@ -339,7 +369,7 @@ def main():
 
 
 
-  pinn = PhysicsInformedNN(layers, h_activation_function= act_func, logger=logger, simul_constants=simul_constants, domain=domain, physics_scale=physics_scale,data_scale=data_loss_scl, lr=lr, data=pinn_data, simul_results=simul_results, storage_path=plots_path)
+  pinn = PhysicsInformedNN(layers, h_activation_function= act_func, logger=logger, simul_constants=simul_constants, domain=domain, physics_scale=physics_scale,data_scale=data_loss_scl, lr=lr, data=pinn_data, simul_results=simul_results, storage_path=plots_path, task_id=task_id)
   pinn.tf_epochs = training_epochs # todo integrate
   pinn.storage_path = plots_path # todo integrate
 
