@@ -99,7 +99,7 @@ class PhysicsInformedNN(object):
         self.data_weights_1 =  tf.Variable(tf.random.uniform([self.x_ic.shape[0], 1], dtype=self.dtype))
         self.data_weights_2 =  tf.Variable(tf.random.uniform([self.x_ic.shape[0], 1], dtype=self.dtype))
 
-        self.term_scaling = tf.Variable(1.0, dtype=self.dtype)
+        self.term_scaling = tf.Variable(0, dtype=self.dtype)
 
         print("weight")
         print(self.physics_weights_1.shape)
@@ -171,6 +171,8 @@ class PhysicsInformedNN(object):
         y_m2_dx = tf.expand_dims(y_dx[..., 1], -1)
         y_m1_dx2 = tf.expand_dims(y_dx2_all[..., 0], -1)
         y_m2_dx2 = tf.expand_dims(y_dx2_all[..., 1], -1)
+        
+        self.term_scaling = (self.curr_iter/self.tf_epochs)
 
         m1_loss = ((self.c1 * (- y_m1) + self.d1 * (- y_m1_dx) + self.term_scaling*(self.c2 * (y_m2 - y_m1)) + self.term_scaling*(self.d2 * (y_m2_dx - y_m1_dx))) / self.m1) - (y_m1_dx2 / self.scaling_factor)  # for input 0 needs to be substituted with input and dx input
         # self.c2 * (y_m2 - y_m1) ganzen term scalien, self.d2 * (y_m2_dx - y_m1_dx)) / self.m1)
@@ -294,6 +296,7 @@ class PhysicsInformedNN(object):
         print("terms scale: ", self.term_scaling)
         for epoch in range(training_epochs):
             #loss_value, log_data, pred_parameters, physics_losses = self.train_step(self.sample_collocation_points(1_000))
+            self.curr_iter = epoch
             loss_value, log_data, pred_parameters, physics_losses = self.train_step(self.x_physics)
 
             # log train loss and errors specified in logger error
@@ -459,9 +462,8 @@ def main():
     pinn.tf_epochs = training_epochs
     pinn.storage_path = plots_path
 
-    for term in terms_scale_lst:
-        pinn.term_scaling = term
-        pinn.fit(training_epochs//len(terms_scale_lst))
+
+    pinn.fit(training_epochs)
 
     # plot results
     plot_loss(logger.loss_over_epoch, pinn.physics_scale, plots_path + "loss", scaled=False)
