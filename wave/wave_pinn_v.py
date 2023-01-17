@@ -359,8 +359,8 @@ class PhysicsInformedNN(object):
     y_lst_big = []
     f_lst_big = []
     for step in considered_steps:
-      tracked_time_steps = np.expand_dims(np.repeat(np.array(step), locs_x.shape[0]*locs_y.shape[0]), 1)
-      input_data_pred = tf.cast(np.hstack((tracked_time_steps,  np.expand_dims(np.repeat(locs_x,locs_y.shape[0]) ,1), np.expand_dims(np.tile(locs_y, locs_x.shape[0]),1))), tf.float32)
+      tracked_time_steps = np.expand_dims(np.repeat(np.array(step),locs_x.shape[0]*locs_y.shape[0]), 1)
+      input_data_pred = tf.cast(np.hstack((tracked_time_steps,np.expand_dims(np.repeat(locs_x,locs_y.shape[0]) ,1), np.expand_dims(np.tile(locs_y, locs_x.shape[0]),1))), tf.float32)
       # just because cant fit all into gpu:
       y_lst = []
       f_lst = []
@@ -404,20 +404,24 @@ def main():
   else:
     act_func = "sine"
     af_str = "sin"
+    
+  act_func = "soft_plus"
+  af_str = "soft_plus"
 
   exp_len = 400
   p_norm = "l1"
   p_start_step = 1
 
-  if task_id <= 7:
+  if task_id <= 3:
     width = 128
   else:
     width = 1024
 
-  p_scale_dic = {0: 0.0, 1: 0.0, 2: 1e-4, 3: 1e-4, 4: 1e-2, 5: 1e-2, 6: 1.0, 7: 1.0, 8: 0.0, 9: 0.0, 10: 1e-4, 11: 1e-4, 12: 1e-2, 13: 1e-2, 14: 1.0, 15: 1.0}
+  p_scale_dic = {0: 1e-5, 1: 1e-4, 2: 1e-2, 3: 1.0,
+                 4: 1e-5, 5: 1e-4, 6: 1e-2, 7: 1.0}
 
-  physics_scale_new = p_scale_dic[task_id]
-  physics_scale = 0.0
+  physics_scale_new = 0.0
+  physics_scale = p_scale_dic[task_id]
 
 
   hidden_layers = 10 #layer_dic[task_id]
@@ -533,6 +537,9 @@ def main():
   for i in range(meta_epochs):
       if i % 1000 == 0:
         print(str(i) + " / " +str(meta_epochs-1))
+      if i % 100 == 0:
+          y_pred, f_pred = pinn.predict_multiple_images(considered_steps=considered_steps, locations=[locations_x, locations_y])
+          plot_comparison(t, y_lbl_error,y_pred, considered_steps,plots_path + "/plots/" +str(i))
       if i==0:
           show_summary = True
       else:

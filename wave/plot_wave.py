@@ -18,7 +18,7 @@ Created on Tue Nov 13 17:04:43 2018
 
 
 # This module defines various plotting helper variables and functions.
-
+# taken from: https://github.com/benmoseley/seismic-simulation-complex-media/blob/701d3af7ac84120202bc9a741bfdf2320ad06ddc/shared_modules/plot_utils.py
 
 from matplotlib.colors import LinearSegmentedColormap
 import numpy as np
@@ -83,8 +83,6 @@ def plot_comparison(t, wavefields, wavefields_pred, titles,  f_path_name):
     #    print("step: ", t[s])
     wavefields = wavefields.reshape(len(titles), 300, 300) # todo not hardcoded
     wavefields_pred = wavefields_pred.numpy().reshape(len(titles), 300, 300)
-    print(wavefields.shape)
-    print(wavefields_pred.shape)
     assert wavefields.shape == wavefields_pred.shape
 
     fig_res = plt.figure(figsize=(20,9))
@@ -109,7 +107,7 @@ def plot_comparison(t, wavefields, wavefields_pred, titles,  f_path_name):
     ax3 = subfigs[2].subplots(nrows=1, ncols=len(titles))
     for count, ax in enumerate(ax3):
         #ax.set_title("t= {:.2f}".format(t[step[count]]) + " s")
-        ax.imshow(wavefields[count, :, :].T-wavefields_pred[count, :, :].T, vmin=-s, vmax=s)
+        ax.imshow(-wavefields[count, :, :].T+wavefields_pred[count, :, :].T, vmin=-s, vmax=s)
         ax.axis('off')
     fig_res.savefig(f_path_name + '_comp.svg', format='svg', dpi=1200)
 

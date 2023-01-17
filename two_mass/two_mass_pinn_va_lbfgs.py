@@ -104,6 +104,8 @@ class PhysicsInformedNN(object):
         self.domain = domain
         self.storage_path = ""
         self.collocation_cuts = []
+        
+        self.lbfgs_iter = 0
 
     def setup_layers2(self, layers, h_activation_function):
         inputs = tf.keras.Input(shape=(layers[0],))
@@ -112,6 +114,9 @@ class PhysicsInformedNN(object):
             if h_activation_function == "sine":
                 print(width, ": sine af")
                 x = tf.keras.layers.Dense(width, activation=tf.math.sin)(x)
+            elif h_activation_function == "swish":
+                print(width, ": swish af")
+                x = tf.keras.layers.Dense(width, activation=tf.keras.activations.swish)(x)
             elif h_activation_function == "sine_single" and count == 0:
                 print(width, ": sine af")
                 x = tf.keras.layers.Dense(width, activation=tf.math.sin)(x)
@@ -140,7 +145,7 @@ class PhysicsInformedNN(object):
         print(layers[-1], ": no af")
         self.model.add(tf.keras.layers.Dense(layers[-1], activation=None, kernel_initializer='glorot_normal'))
 
-    def store_intermediate_result(self, epoch, pred_params, physics_losses):
+    def store_intermediate_result(self, epoch, pred_params, physics_losses, detailed=False):
         y_m1, y_m2, y_m1_dx, y_m2_dx, y_m1_dx2, y_m2_dx2 = pred_params
         y_pred = tf.concat((y_m1, y_m2), axis=1)
         with open(self.storage_path + "loss_epoch.pkl", "wb") as fp:
@@ -151,11 +156,19 @@ class PhysicsInformedNN(object):
 
         plot_solution(self.input_all, self.y_lbl_all[:, 1], self.y_lbl_all[:, 0], self.x_ic, self.y_lbl_ic[:, 1],
                       self.y_lbl_ic[:, 0], y_pred, self.storage_path + "/plots/" + "res_", epoch)
-        plot_terms_diff(self.input_all, physics_losses[0], physics_losses[1], y_pred, self.y_lbl_all,
-                        self.storage_path + "res_error_all", p_plot_start=1)
-        plot_terms_detail(self.input_all, y_m2, self.y_m2_simul, y_m1, self.y_m1_simul, y_m2_dx, self.y_m2_dx_simul,
-                          y_m1_dx, self.y_m1_dx_simul, y_m2_dx2, self.y_m2_dx2_simul, y_m1_dx2, self.y_m1_dx2_simul,
-                          f_path_name=self.storage_path + "res_error_detail_after")
+        if detailed == True:
+            #/error /detail
+            plot_terms_diff(self.input_all, physics_losses[0], physics_losses[1], y_pred, self.y_lbl_all,
+                self.storage_path + "/error/" + "res_error_all_" + str(epoch), p_plot_start=1)
+            plot_terms_detail(self.input_all, y_m2, self.y_m2_simul, y_m1, self.y_m1_simul, y_m2_dx, self.y_m2_dx_simul,
+                y_m1_dx, self.y_m1_dx_simul, y_m2_dx2, self.y_m2_dx2_simul, y_m1_dx2, self.y_m1_dx2_simul,
+                f_path_name=self.storage_path + "/detail/" + "res_error_detail_after" + str(epoch))
+        else:
+            plot_terms_diff(self.input_all, physics_losses[0], physics_losses[1], y_pred, self.y_lbl_all,
+                            self.storage_path + "res_error_all", p_plot_start=1)
+            plot_terms_detail(self.input_all, y_m2, self.y_m2_simul, y_m1, self.y_m1_simul, y_m2_dx, self.y_m2_dx_simul,
+                            y_m1_dx, self.y_m1_dx_simul, y_m2_dx2, self.y_m2_dx2_simul, y_m1_dx2, self.y_m1_dx2_simul,
+                            f_path_name=self.storage_path + "res_error_detail_after")
 
         plt.close('all')
 
@@ -175,11 +188,8 @@ class PhysicsInformedNN(object):
         y_m1_dx2 = tf.expand_dims(y_dx2_all[..., 0], -1)
         y_m2_dx2 = tf.expand_dims(y_dx2_all[..., 1], -1)
 
-        m1_loss = ((self.c1 * (- y_m1) + self.d1 * (- y_m1_dx) + self.c2 * (y_m2 - y_m1) + self.d2 * (
-                    y_m2_dx - y_m1_dx)) / self.m1) - (
-                              y_m1_dx2 / self.scaling_factor)  # for input 0 needs to be substituted with input and dx input
-        m2_loss = (((-self.c2 * (y_m2 - y_m1) - self.d2 * (y_m2_dx - y_m1_dx)) / self.m2) - (
-                    y_m2_dx2 / self.scaling_factor))
+        m1_loss = ((self.c1 * (- y_m1) + self.d1 * (- y_m1_dx) + self.c2 * (y_m2 - y_m1) + self.d2 * (y_m2_dx - y_m1_dx)) / self.m1) - (y_m1_dx2 / self.scaling_factor)  # for input 0 needs to be substituted with input and dx input
+        m2_loss = (((-self.c2 * (y_m2 - y_m1) - self.d2 * (y_m2_dx - y_m1_dx)) / self.m2) - (y_m2_dx2 / self.scaling_factor))
 
         return [m1_loss, m2_loss]
 
@@ -330,8 +340,8 @@ class PhysicsInformedNN(object):
 
         # relog loss
         #data_for_logger = [loss_value, log_data, pred_parameters, physics_losses]
-        for c,val in enumerate(log_data_lbfgs):
-            self.logger.log_train_epoch(epoch+c, val[0], val[1])
+        #for c,val in enumerate(log_data_lbfgs):
+        #    self.logger.log_train_epoch(epoch+c, val[0], val[1])
         #self.logger.log_train_end(self.tf_epochs, log_data)
 
 
@@ -388,6 +398,11 @@ class PhysicsInformedNN(object):
             f_pred_m2 = tf.reduce_mean(tf.square(m2_loss))
             log_data = [m1_data_loss, m2_data_loss, f_pred_m1, f_pred_m2]
             data_for_logger = [loss_value, log_data, pred_parameters, physics_losses]
+            self.logger.log_train_epoch(self.tf_epochs+self.lbfgs_iter, loss_value, log_data)
+            if self.lbfgs_iter % 10 == 0:
+                 self.store_intermediate_result(self.tf_epochs+self.lbfgs_iter, pred_parameters, physics_losses, detailed=True)
+                 
+            self.lbfgs_iter +=1
             return loss_value, grad_flat, data_for_logger
 
         return loss_and_flat_grad
@@ -407,42 +422,44 @@ def get_layer_list(nr_inputs, nr_outputs, nr_hidden_layers, width):
 
 
 def main():
-    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    #task_id = int(sys.argv[1])
+    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    task_id = int(sys.argv[1])
     print("task_id: ", task_id)
 
     # Parameters that change based on task id ############################################################################
 
+    lr = tf.Variable(1e-4)
+    data_loss_scl = tf.Variable(1.0)
+    physics_scale = tf.Variable(1e-5, dtype=tf.float32)
 
-
-    if task_id <= 2:
-        training_epochs = 20_001#200_001#1_200_000
-        bfgs_iter = 2_000
+    if task_id <= 1:
+        training_epochs = 0#20_001#200_001#1_200_000
+        bfgs_iter = 20_000#2_000
         bfgs_lr = 0.8
         physics_scale_bfgs = tf.Variable(1e-4, dtype=tf.float32)
-    elif 2 < task_id <= 5:
-        training_epochs = 20_001#200_001#1_200_000
-        bfgs_iter = 10_000
+        act_func = "sine_single"
+        af_str = "sine_single"
+    elif 1 < task_id <= 3:
+        training_epochs = 0#20_001#200_001#1_200_000
+        bfgs_iter = 20_000#2_000
         bfgs_lr = 0.8
         physics_scale_bfgs = tf.Variable(1e-4, dtype=tf.float32)
-    elif 5 < task_id <= 8:
-        training_epochs = 40_001#200_001#1_200_000
-        bfgs_iter = 2_000
+        act_func = "swish"
+        af_str = "swish"
+    elif 3 < task_id <= 5:
+        training_epochs = 80_001#200_001#1_200_000
+        bfgs_iter = 0
         bfgs_lr = 0.8
         physics_scale_bfgs = tf.Variable(1e-4, dtype=tf.float32)
-    elif 8 < task_id <= 11:
-        training_epochs = 40_001#200_001#1_200_000
-        bfgs_iter = 10_000
+        act_func = "sine_single"
+        af_str = "sine_single"
+    elif 5 < task_id <= 7:
+        training_epochs = 80_001#200_001#1_200_000
+        bfgs_iter = 0
         bfgs_lr = 0.8
-        physics_scale_bfgs = tf.Variable(1, dtype=tf.float32)
-    elif 11 < task_id <= 14:
-        bfgs_iter = 10_000
-        bfgs_lr = 0.8
-        physics_scale_bfgs = tf.Variable(1, dtype=tf.float32)
-
-
-    act_func = "sine_single"
-    af_str = "sine_single"
+        physics_scale_bfgs = tf.Variable(1e-4, dtype=tf.float32)
+        act_func = "swish"
+        af_str = "swish"
 
     ic_points_idx = [0]
     d_p_string = "vanilla_sa"
@@ -458,17 +475,12 @@ def main():
       d_p_string = "cont"
     '''
     print("ic points: ", ic_points_idx)
-    hidden_layers = 7
-
+    hidden_layers = 10
     weight_factor = 2
-
-    lr = tf.Variable(1e-3)
-    data_loss_scl = tf.Variable(1.0)
-    physics_scale = tf.Variable(1e-4, dtype=tf.float32)
-
-    lr = tf.Variable(1e-4)
-    physics_scale = tf.Variable(1e-6)
-    data_loss_scl = tf.Variable(1.0)
+    #if task_id == 1:
+    #    lr = tf.Variable(1e-4)
+    #    physics_scale = tf.Variable(1e-6)
+    #    data_loss_scl = tf.Variable(1.0)
     ######################################################################################################################
     # Fixed parameters PINN
     
@@ -542,14 +554,29 @@ def main():
     # Setting up folder structure # todo clean up
     result_folder_name = 'res'
     os.makedirs(result_folder_name, exist_ok=True)
-    experiment_name = "two_mass_sa_martin_tc_fixeds_conc_sin_lbfgs_h_l_" + str(hidden_layers) + "_w_" + str(
+    experiment_name = "two_mass_sa_martin_tc_fixeds_sin_lbfgs_h_l_" + str(hidden_layers) + "_w_" + str(
         width) + "_af_" + af_str + "_lr_" + str(lr.numpy()) + "_expl_" + str(exp_len) + "_steps_" + str(
         steps) + "_ds_" + str(data_loss_scl.numpy()) + "_ps_" + str(physics_scale.numpy()) + "_wf_" + str(
         weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)
     print("Config name: ", experiment_name)
     os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
     os.makedirs(result_folder_name + "/" + experiment_name + "/plots", exist_ok=True)
+    os.makedirs(result_folder_name + "/" + experiment_name + "/error", exist_ok=True)
+    os.makedirs(result_folder_name + "/" + experiment_name + "/detail", exist_ok=True)
     plots_path = result_folder_name + "/" + experiment_name + "/"
+    
+    ###ä#########
+    m1_loss_hand = ((c1 * (- y_m1_simul) + d1 * (- y_m1_dx_simul) + c2 * (y_m2_simul - y_m1_simul) + d2 * (y_m2_dx_simul - y_m1_dx_simul)) / m1) - (y_m1_dx2_simul / 1.0)
+    m2_loss_hand = (((-c2 * (y_m2_simul - y_m1_simul) - d2 * (y_m2_dx_simul - y_m1_dx_simul)) / m2) - (y_m2_dx2_simul / 1.0))
+    fig_res = plt.figure(figsize=(12, 12))
+    plt.subplot(2, 1, 1)
+    plt.plot(tExci[1:-1], m2_loss_hand[1:-1], label="m2 hand")
+    plt.legend()
+    plt.subplot(2, 1, 2)
+    plt.plot(tExci[1:-1], m1_loss_hand[1:-1], label="m1 hand")
+    plt.legend()
+    fig_res.savefig(plots_path + "hand_solution" + '.svg', format='svg', dpi=1200)
+    #####
 
     # plotting solution
     plot_solution(t, y_lbl_m2, y_lbl_m1, x_data, y_data_m2, y_data_m1, None, plots_path + "exact_solution")

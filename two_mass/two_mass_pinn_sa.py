@@ -319,16 +319,12 @@ def main():
     print("task_id: ", task_id)
 
     # Parameters that change based on task id ############################################################################
-    if task_id % 2 == 0:
-        act_func = "sine_all"
-        af_str = "sine_all"
-    else:
-        act_func = "sine"
-        af_str = "sin"
+    act_func = "sine_all"
+    af_str = "sine_all"
 
     ic_points_idx = [0]
     d_p_string = "vanilla_sa"
-    '''
+
     if task_id <= 1:
       ic_points_idx = [7499]
       d_p_string = "end"
@@ -338,13 +334,14 @@ def main():
     elif 3 < task_id <= 5:
       ic_points_idx = [x for x in range(0, 7499, 500)]
       d_p_string = "cont"
-    '''
-    lr = tf.Variable(1e-4)
+
+    
     print("ic points: ", ic_points_idx)
     hidden_layers = 7
 
     weight_factor = 2
 
+    lr = tf.Variable(1e-4)
     physics_scale = tf.Variable(1e-6)
     data_loss_scl = tf.Variable(1.0)
     ######################################################################################################################
