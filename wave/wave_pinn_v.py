@@ -393,9 +393,9 @@ class PhysicsInformedNN(object):
 
 # from matlab script############################################################
 def main():
-  tf.keras.backend.set_floatx('float32')
+  #tf.keras.backend.set_floatx('float32')
   task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-  #task_id = int(sys.argv[1])
+  task_id = int(sys.argv[1])
   print("task_id: ", task_id)
   input_bool = False
   if task_id % 2 == 0:
@@ -412,16 +412,13 @@ def main():
   p_norm = "l1"
   p_start_step = 1
 
-  if task_id <= 3:
-    width = 128
-  else:
-    width = 1024
+  width = 1024
 
-  p_scale_dic = {0: 1e-5, 1: 1e-4, 2: 1e-2, 3: 1.0,
-                 4: 1e-5, 5: 1e-4, 6: 1e-2, 7: 1.0}
+  p_scale_dic = {0: 1, 1: 1e-4, 2: 1e-2, 3: 1e-5,
+                 4: 1, 5: 1e-4, 6: 1e-2, 7: 1e-5}
 
-  physics_scale_new = 0.0
-  physics_scale = p_scale_dic[task_id]
+  physics_scale_new = p_scale_dic[task_id]
+  physics_scale = 0.0
 
 
   hidden_layers = 10 #layer_dic[task_id]
@@ -445,9 +442,9 @@ def main():
   ppi = 0
   max_iter_overall = 1#
   if width == 1024:
-    meta_epochs = 400_000  # todo without hard coded numbers
+    meta_epochs = 1_000_000  # todo without hard coded numbers
   else:
-    meta_epochs = 800_000
+    meta_epochs = 1_000_000
   lr = tf.Variable(1e-4)#tf.Variable(1e-4)
   tf_epochs_warm_up = 2000
   tf_epochs_train = int(max_iter_overall / meta_epochs)
