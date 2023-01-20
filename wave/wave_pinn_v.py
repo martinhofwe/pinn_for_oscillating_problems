@@ -327,7 +327,7 @@ class PhysicsInformedNN(object):
     for epoch in range(tf_epochs):
       loss_value, grads = self.__grad(x, y_lbl, x_physics, x_semi_begin, semi_scale)
       self.optimizer.apply_gradients(zip(grads, self.__wrap_training_variables()))
-      #self.logger.log_train_epoch(epoch, loss_value)
+      self.logger.log_train_epoch(epoch, loss_value)
 
     self.logger.log_train_end(tf_epochs)
 
@@ -534,9 +534,10 @@ def main():
   for i in range(meta_epochs):
       if i % 1000 == 0:
         print(str(i) + " / " +str(meta_epochs-1))
-      if i % 100 == 0:
+      if i % 25_000 == 0:
           y_pred, f_pred = pinn.predict_multiple_images(considered_steps=considered_steps, locations=[locations_x, locations_y])
           plot_comparison(t, y_lbl_error,y_pred, considered_steps,plots_path + "/plots/" +str(i))
+          plt.close('all')
       if i==0:
           show_summary = True
       else:

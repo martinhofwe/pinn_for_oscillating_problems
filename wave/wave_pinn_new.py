@@ -285,9 +285,6 @@ class PhysicsInformedNN(object):
                 data_pred, physics_pred = 0.0, 0.0
                 data_loss_metric_t, physics_loss_metric_t = 0.0, 0.0
                 for c, time_step_idx in enumerate(self.considered_steps):
-                    print("log start timestep ", time_step_idx)
-
-
                     input_data, lbl = self.get_input_lable_for_timestep(time_step_idx)
                     # process row wise so that it fits into memory
                     data_pred, physics_pred = self.split_img_into_batches(input_data)
@@ -295,11 +292,11 @@ class PhysicsInformedNN(object):
                     physics_loss_metric_t += tf.reduce_mean(tf.square(physics_pred))
                     if epoch % 25_000 == 0:
                       if c == 0:
-                          #pred_parameters = data_pred.numpy()
-                          pred_parameters = data_pred
+                          pred_parameters = data_pred.numpy()
+                          #pred_parameters = data_pred
                       else:
-                            #pred_parameters = np.concatenate((pred_parameters, data_pred), 0)
-                            pred_parameters = tf.concat([pred_parameters, data_pred], 0)
+                            pred_parameters = np.concatenate((pred_parameters, data_pred.numpy()), 0)
+                            #pred_parameters = tf.concat([pred_parameters, data_pred], 0)
                 log_data = [data_loss_metric_t / len(self.considered_steps),
                             physics_loss_metric_t / len(self.considered_steps)]
                 # pred_parameters = tf.concat(pred_t, 0)
@@ -326,8 +323,8 @@ def get_layer_list(nr_inputs, nr_outputs, nr_hidden_layers, width):
 
 
 def main():
-    # task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    task_id = int(sys.argv[1])
+    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    #task_id = int(sys.argv[1])
     print("task_id: ", task_id)
     input_bool = False
     if task_id % 2 == 0:

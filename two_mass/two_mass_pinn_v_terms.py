@@ -138,10 +138,10 @@ class PhysicsInformedNN(object):
       y_m1_dx2 = tf.expand_dims(y_dx2_all[..., 0], -1)
       y_m2_dx2 = tf.expand_dims(y_dx2_all[..., 1], -1)
 
-      if self.curr_epoch >= self.terms_stop // 2:
+      if self.curr_epoch >= self.terms_stop:
           self.term_scaling = 1.0
       else:
-          self.term_scaling = (self.curr_epoch/(self.terms_stop//2))
+          self.term_scaling = (self.curr_epoch/(self.terms_stop))
 
       m1_loss = ((self.c1 * (- y_m1) + self.d1 * (- y_m1_dx) + self.term_scaling*(self.c2 * (y_m2 - y_m1)) + self.term_scaling*(self.d2 * (y_m2_dx - y_m1_dx))) / self.m1) - (y_m1_dx2 / self.scaling_factor)  # for input 0 
       m2_loss = (( (-self.c2 * (y_m2 - self.term_scaling*y_m1) -  self.d2 * (y_m2_dx - self.term_scaling*(y_m1_dx))) / self.m2) - (y_m2_dx2 / self.scaling_factor))
@@ -286,6 +286,8 @@ def main():
       terms_stop = 30_000
   if task_id == 3:
       terms_stop = 50_000
+  if task_id == 4:
+      terms_stop = 1
 
 
   weight_factor = 2
