@@ -170,7 +170,7 @@ class PhysicsInformedNN(object):
 
         boundary_lbl = self.y_data[idx_time, idx_pos_x, idx_pos_y]
 
-        return input_data_boundary, boundary_lbl
+        return input_data_boundary, tf.cast(boundary_lbl, self.dtype)
 
     def get_input_lable_for_timestep(self, timestep_idx):
         t_cons = self.t_all[timestep_idx]  # self.t_all[self.considered_steps]
@@ -229,7 +229,6 @@ class PhysicsInformedNN(object):
         return p_loss_mean
 
     def split_img_into_batches2(self, input_data_pred, nr_samples=500):
-        print("split into batches")
         nr_splits = input_data_pred.shape[0] // nr_samples
         physics_loss, pred_parameters = self.f_model_detail(input_data_pred[0 * nr_samples:(0 + 1) * nr_samples])
         data_tensor = pred_parameters[0]
@@ -238,11 +237,10 @@ class PhysicsInformedNN(object):
             physics_loss, pred_parameters = self.f_model_detail(input_data_pred[i * nr_samples:(i + 1) * nr_samples])
             data_tensor = tf.concat([data_tensor, pred_parameters[0]], axis=0)
             p_tensor = tf.concat([p_tensor, physics_loss], axis=0)
-        print("split into batches end")
+
         return tf.concat(data_tensor, axis=0), tf.concat(p_tensor, axis=0)
 
     def split_img_into_batches(self, input_data_pred, nr_samples=500):
-        print("split into batches")
         nr_splits = input_data_pred.shape[0] // nr_samples
         data_lst = []
         p_lst = []
@@ -250,17 +248,13 @@ class PhysicsInformedNN(object):
             physics_loss, pred_parameters = self.f_model_detail(input_data_pred[i * nr_samples:(i + 1) * nr_samples])
             data_lst.append(pred_parameters[0])
             p_lst.append(physics_loss)
-        print("split into batches end")
         return tf.concat(data_lst, axis=0), tf.concat(p_lst, axis=0)
 
     @tf.function
     def train_step(self, input_data_boundary, boundary_lbl, x_col):
-        print("train step")
         with tf.GradientTape(persistent=True) as tape:
-            print("data loss")
             # data loss / initial condition
             data_loss = self.calc_loss_ic(input_data_boundary, boundary_lbl)
-            print("p loss")
             # physics loss
             p_loss = self.calc_physics_loss(x_col)
             combined_weighted_loss = self.data_loss_scl * data_loss + self.physics_scale * (p_loss)
@@ -269,9 +263,6 @@ class PhysicsInformedNN(object):
         grads = tape.gradient(combined_weighted_loss, self.model.weights)
         del tape
         self.optimizer.apply_gradients(zip(grads, self.model.weights))
-
-        # split since not all images fit into memory at once
-        print("returning")
         return combined_weighted_loss
 
     def fit(self):
@@ -280,39 +271,44 @@ class PhysicsInformedNN(object):
             print("epoch ", epoch)
             # loss_value, log_data, pred_parameters, physics_losses = self.train_step(self.x_physics)
             input_data_boundary, boundary_lbl = self.sample_boundary_points(500)
-            loss_value, log_data, pred_parameters = self.train_step(input_data_boundary, boundary_lbl,
+            #print(input_data_boundary.type)
+            #print(boundary_lbl.type)
+            #print(self.sample_collocation_points(500).type)
+            loss_value = self.train_step(input_data_boundary, boundary_lbl,
                                                                     self.sample_collocation_points(
                                                                         500))  # todo as parameter
-            print("returned")
-            print("log start")
-            # to fit into gpu memory
-            for c, time_step_idx in enumerate(self.considered_steps):
-                print("log start timestep ", time_step_idx)
-                if c == 0:
-                    input_data, lbl = self.get_input_lable_for_timestep(time_step_idx)
-                # process row wise so that it fits into memory
-                data_pred, physics_pred = self.split_img_into_batches(input_data)
-                pred_t = data_pred
-                data_loss_metric_t = tf.square(tf.squeeze(data_pred) - tf.squeeze(lbl))
-                physics_loss_metric_t = tf.square(physics_pred)
-            else:
-                input_data, lbl = self.get_input_lable_for_timestep(time_step_idx)
-                # process row wise so that it fits into memory
-                data_pred, physics_pred = self.split_img_into_batches2(input_data)
-                pred_t = tf.concat([pred_t, data_pred], 0)
-                data_loss_metric_t = tf.concat([data_loss_metric_t, tf.square(tf.squeeze(data_pred) - tf.squeeze(lbl))], 0)
-                physics_loss_metric_t = tf.concat([physics_loss_metric_t, tf.square(physics_pred)], 0)
-            print("log end")
-            log_data = [tf.reduce_mean(tf.concat(data_loss_metric_t, 0)), tf.reduce_mean(tf.concat(physics_loss_metric_t, 0))]
-            print("befor conc")
-            pred_parameters = tf.concat(pred_t, 0)
-            # log train loss and errors specified in logger error
-            # self.logger.log_train_epoch(epoch, loss_value, log_data)
 
-            if epoch % 5_000 == 0:
-                print("before store")
-                self.store_intermediate_result(epoch, pred_parameters)
-                print("after store")
+            # split since not all images fit into memory at once
+            if epoch % 1_000 == 0:
+                print("log start")
+                # to fit into gpu memory
+                data_pred, physics_pred = 0.0, 0.0
+                data_loss_metric_t, physics_loss_metric_t = 0.0, 0.0
+                for c, time_step_idx in enumerate(self.considered_steps):
+                    print("log start timestep ", time_step_idx)
+
+
+                    input_data, lbl = self.get_input_lable_for_timestep(time_step_idx)
+                    # process row wise so that it fits into memory
+                    data_pred, physics_pred = self.split_img_into_batches(input_data)
+                    data_loss_metric_t += tf.reduce_mean(tf.square(tf.squeeze(data_pred) - tf.squeeze(lbl)))
+                    physics_loss_metric_t += tf.reduce_mean(tf.square(physics_pred))
+                    if epoch % 25_000 == 0:
+                      if c == 0:
+                          #pred_parameters = data_pred.numpy()
+                          pred_parameters = data_pred
+                      else:
+                            #pred_parameters = np.concatenate((pred_parameters, data_pred), 0)
+                            pred_parameters = tf.concat([pred_parameters, data_pred], 0)
+                log_data = [data_loss_metric_t / len(self.considered_steps),
+                            physics_loss_metric_t / len(self.considered_steps)]
+                # pred_parameters = tf.concat(pred_t, 0)
+
+                # log train loss and errors specified in logger error
+                self.logger.log_train_epoch(epoch, loss_value, log_data)
+
+                if epoch % 25_000 == 0:
+                    self.store_intermediate_result(epoch, pred_parameters)
         self.logger.log_train_end(self.tf_epochs, log_data)
 
     def predict(self, x):
@@ -350,8 +346,7 @@ def main():
 
     width = 1024
 
-    p_scale_dic = {0: 0.0, 1: 1e-4, 2: 1e-2, 3: 1.0,
-                   4: 0.0, 5: 1e-4, 6: 1e-2, 7: 1.0}
+    p_scale_dic = {0: 0.0, 1: 1.0, 2: 1e-2, 3: 1e-4}
 
     physics_scale = p_scale_dic[task_id]
 
@@ -359,7 +354,7 @@ def main():
     layers = get_layer_list(nr_inputs=3, nr_outputs=1, nr_hidden_layers=hidden_layers, width=width)
 
     print("layers: ", layers)
-    training_epochs = 1_000_000
+    training_epochs = 1_000_001
     lr = tf.Variable(1e-4)
     ######################################################################################################################
     # load data
@@ -401,6 +396,7 @@ def main():
     os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
     os.makedirs(result_folder_name + "/" + experiment_name + "/plots", exist_ok=True)
     considered_steps = np.array([0, 12, 25, 37, 50, 62, 75, 87, 100])
+    #considered_steps = np.array([0, 50, 100])
     y_lbl_error = wavefields[considered_steps, :, :]
     # plotting
     plots_path = result_folder_name + "/" + experiment_name + "/"
@@ -419,6 +415,7 @@ def main():
     plot_loss(logger.loss_over_meta, pinn.physics_scale, plots_path + "loss", scaled=False)
     plot_loss(logger.loss_over_meta, pinn.physics_scale, plots_path + "loss_scaled", scaled=True)
 
+    '''
     y_pred, f_pred = pinn.predict_multiple_images(considered_steps=considered_steps,
                                                   locations=[locations_x, locations_y])
     plot_comparison(t, y_lbl_error, y_pred, considered_steps, plots_path + "end")
@@ -427,7 +424,7 @@ def main():
                                                   locations=[locations_x, locations_y])
     plot_comparison(t, y_lbl[[0, 2, 4, 6, 8, 10, 12, 14, 16]].flatten(), y_pred, considered_steps,
                     plots_path + "learned")
-
+    '''
     print("Finished")
 
 
