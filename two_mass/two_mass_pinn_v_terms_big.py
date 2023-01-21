@@ -233,7 +233,7 @@ class PhysicsInformedNN(object):
       # log train loss and errors specified in logger error
       self.logger.log_train_epoch(epoch, loss_value, log_data)
 
-      if epoch % 1_000 == 0:
+      if epoch % 25_000 == 0:
         self.store_intermediate_result(epoch, pred_parameters, physics_losses)
     self.logger.log_train_end(self.tf_epochs,  log_data)
 
@@ -278,13 +278,13 @@ def main():
   hidden_layers = 7
   
   if task_id == 0:
-    terms_stop = 1_000
+    terms_stop = 10_000
   if task_id == 1:
-     terms_stop = 10_000
+     terms_stop = 100_000
   if task_id == 2:
-      terms_stop = 30_000
+      terms_stop = 300_000
   if task_id == 3:
-      terms_stop = 50_000
+      terms_stop = 500_000
   if task_id == 4:
       terms_stop = 1
 
@@ -295,7 +295,7 @@ def main():
   data_loss_scl = tf.Variable(1.0)
   ######################################################################################################################
   # Fixed parameters PINN
-  training_epochs = 80_000#1_200_000
+  training_epochs = 1_200_000
   width = 128
   layers = get_layer_list(nr_inputs=1, nr_outputs=2, nr_hidden_layers=hidden_layers, width=width)
 
@@ -313,15 +313,15 @@ def main():
   steps = 100_000  # number of steps in time domain
 
   ###
-  weight_factor = 20
-  x_d = [0, 6]
-  c2_in = 0.5e6 * 2  # (0.5e8 * 2)  # orig: 0.5e6 * 2
-  d2_in = 1.5e4 * 2  # (1.5e3 * 2)  # orig: 1.5e4 * 2
-  m2 = 15_000  # 3_000  # orig : 15_000 * weight_factor
-  m1 = 3_000  # 15_000 * weight_factor
-  end = 6
-  exp_len = 750
-  steps = 4_001
+  # weight_factor = 20
+  # x_d = [0, 6]
+  # c2_in = 0.5e6 * 2  # (0.5e8 * 2)  # orig: 0.5e6 * 2
+  # d2_in = 1.5e4 * 2  # (1.5e3 * 2)  # orig: 1.5e4 * 2
+  # m2 = 15_000  # 3_000  # orig : 15_000 * weight_factor
+  # m1 = 3_000  # 15_000 * weight_factor
+  # end = 6
+  # exp_len = 750
+  # steps = 4_001
 
   ###
 
@@ -365,7 +365,7 @@ def main():
   # Setting up folder structure # todo clean up
   result_folder_name = 'res'
   os.makedirs(result_folder_name, exist_ok=True)
-  experiment_name = "two_mass_vanilla_terms_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_af_" + af_str + "_lr_" + str(lr.numpy())+ "_expl_" + str(exp_len)+ "_steps_" + str(steps) +"_ds_" + str(data_loss_scl.numpy())+ "_ps_" + str(physics_scale.numpy())+ "_wf_" + str(weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)
+  experiment_name = "two_mass_vanilla_terms_big_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_af_" + af_str + "_lr_" + str(lr.numpy())+ "_expl_" + str(exp_len)+ "_steps_" + str(steps) +"_ds_" + str(data_loss_scl.numpy())+ "_ps_" + str(physics_scale.numpy())+ "_wf_" + str(weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)
   print("Config name: ", experiment_name)
   os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
   os.makedirs(result_folder_name + "/" + experiment_name+ "/plots", exist_ok=True)

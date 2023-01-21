@@ -189,7 +189,7 @@ class PhysicsInformedNN(object):
 
     # Defining custom loss
     @tf.function
-    def __loss(self, x, y_lbl, x_physics, y, x_semi_begin=None, semi_scale=None, p_norm=None):
+    def __loss(self, x, y_lbl, x_physics, y, x_semi_begin=None, semi_scale=None, p_norm=None, physiscs_scale=1.0):
 
         f_pred = self.f_model(x_physics)
         if x_semi_begin is not None:
@@ -205,12 +205,12 @@ class PhysicsInformedNN(object):
         if p_norm == "l1":
             physics_loss = tf.reduce_mean(tf.math.abs(f_pred))
 
-        return data_loss + data_loss_semi + self.physics_scale * physics_loss
+        return data_loss + data_loss_semi + physics_scale * physics_loss # todo check if it wors as intened
 
     def __grad(self, x, y_lbl, x_physics, x_semi_begin, semi_scale):
         with tf.GradientTape() as tape:
             tape.watch(x)
-            loss_value = self.__loss(x, y_lbl, x_physics, self.model(x), x_semi_begin, semi_scale, p_norm=self.p_norm)
+            loss_value = self.__loss(x, y_lbl, x_physics, self.model(x), x_semi_begin, semi_scale, p_norm=self.p_norm, physiscs_scale=self.physisc_scale)
         return loss_value, tape.gradient(loss_value, self.__wrap_training_variables())
 
     def __wrap_training_variables(self):
@@ -401,7 +401,7 @@ class PhysicsInformedNN(object):
 def main():
     # tf.keras.backend.set_floatx('float32')
     task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    # task_id = int(sys.argv[1])
+    #task_id = int(sys.argv[1])
     print("task_id: ", task_id)
     input_bool = False
     if task_id % 2 == 0:
@@ -442,7 +442,6 @@ def main():
     logger = Logger(frequency=1000)
 
     p_start = 0
-    p_end = 250
     # parameters ########################################################################################################
     ppi = 0
     max_iter_overall = 1  #
@@ -461,7 +460,7 @@ def main():
         learning_rate=lr,
         beta_1=0.8, decay=0.)
 
-    experiment_name = "wave_vanilla_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(
+    experiment_name = "wave_vanilla_schedule_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(
         hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_input_" + str(
         input_bool) + "_expl_" + str(exp_len) + "_ps_" + str(physics_scale_new) + "_pstart_" + str(
         p_start_step) + "_id_" + str(task_id)
@@ -568,10 +567,17 @@ def main():
         data_lbl = y_data[idx_time, idx_pos_x, idx_pos_y]
 
         # create physics loss batch
+        if i >= meta_epochs // 2:
+          if i % ((meta_epochs // 2) // time_steps.shape[0]) == 0: # todo clean up
+              p_end += 1
+              p_end = max(p_end, time_steps.shape[0])
+        else:
+            p_end = 1
+
         idx_pos_p_x = np.expand_dims(random.choices(np.arange(0, locations_x.shape[0]), k=5),
                                      1)  # todo needs rework? more points?
         idx_pos_p_y = np.expand_dims(random.choices(np.arange(0, locations_y.shape[0]), k=5), 1)
-        idx_time_p = np.expand_dims(np.arange(p_start_step, time_steps.shape[0]), 1)
+        idx_time_p = np.expand_dims(np.arange(p_start_step, p_end), 1)
 
         batch_pos_p_x = np.tile(idx_pos_p_x, (100, 1))
         batch_pos_p_y = np.tile(idx_pos_p_y, (100, 1))
