@@ -82,7 +82,7 @@ def plot_comparison(t, wavefields, wavefields_pred, titles,  f_path_name):
     #for s in selected_timesteps:
     #    print("step: ", t[s])
     wavefields = wavefields.reshape(len(titles), 300, 300) # todo not hardcoded
-    wavefields_pred = wavefields_pred.reshape(len(titles), 300, 300)
+    wavefields_pred = wavefields_pred.numpy().reshape(len(titles), 300, 300)
     assert wavefields.shape == wavefields_pred.shape
 
     fig_res = plt.figure(figsize=(20,9))

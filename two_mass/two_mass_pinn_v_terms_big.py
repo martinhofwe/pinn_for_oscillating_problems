@@ -138,10 +138,10 @@ class PhysicsInformedNN(object):
       y_m1_dx2 = tf.expand_dims(y_dx2_all[..., 0], -1)
       y_m2_dx2 = tf.expand_dims(y_dx2_all[..., 1], -1)
 
-      if epoch >= self.terms_stop or epoch == None:
-          term_scaling = 1.0
+      if epoch >= self.terms_stop or epoch == -1:
+          term_scaling = tf.math.minimum(tf.cast(((epoch+1-self.terms_stop)/(self.terms_stop2+1-self.terms_stop)), tf.float32), 1.0)
       else:
-          term_scaling = tf.cast((epoch/(self.terms_stop)), tf.float32)
+          term_scaling = 0.0 
 
       m1_loss = ((self.c1 * (- y_m1) + self.d1 * (- y_m1_dx) + term_scaling*(self.c2 * (y_m2 - y_m1)) + term_scaling*(self.d2 * (y_m2_dx - y_m1_dx))) / self.m1) - (y_m1_dx2 / self.scaling_factor)  # for input 0
       m2_loss = (( (-self.c2 * (y_m2 - term_scaling*y_m1) -  self.d2 * (y_m2_dx - term_scaling*(y_m1_dx))) / self.m2) - (y_m2_dx2 / self.scaling_factor))
@@ -240,7 +240,7 @@ class PhysicsInformedNN(object):
 
   def predict(self, x):
     y = self.model(x)
-    f_m1, f_m2 = self.f_model(x, None)
+    f_m1, f_m2 = self.f_model(x, tf.cast(-1, tf.int32))
     return [y, f_m1, f_m2]
 
 def get_layer_list(nr_inputs, nr_outputs, nr_hidden_layers, width):
@@ -278,15 +278,17 @@ def main():
   hidden_layers = 7
   
   if task_id == 0:
-    terms_stop = 10_000
+    terms_stop = 100_000
+    terms_stop2 = 1_200_000
   if task_id == 1:
      terms_stop = 100_000
+     terms_stop2 = 200_000
   if task_id == 2:
-      terms_stop = 300_000
+      terms_stop = 500_000
+      terms_stop2 = 1_200_000
   if task_id == 3:
       terms_stop = 500_000
-  if task_id == 4:
-      terms_stop = 1
+      terms_stop2 = 850_000
 
 
   weight_factor = 2
@@ -353,7 +355,6 @@ def main():
   y_lbl_ic = tf.constant(y_data_all, dtype=tf.float32)
   x_physics = tf.convert_to_tensor(input_data_physics, dtype=tf.float32) # not used in the moment since we randomly sample physic points
 
-
   # test set, used to calcualte logged loss not used in training
   y_lbl_m1 = y_m1_simul[data_start:]
   y_lbl_m2 = y_m2_simul[data_start:]
@@ -365,7 +366,7 @@ def main():
   # Setting up folder structure # todo clean up
   result_folder_name = 'res'
   os.makedirs(result_folder_name, exist_ok=True)
-  experiment_name = "two_mass_vanilla_terms_big_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_af_" + af_str + "_lr_" + str(lr.numpy())+ "_expl_" + str(exp_len)+ "_steps_" + str(steps) +"_ds_" + str(data_loss_scl.numpy())+ "_ps_" + str(physics_scale.numpy())+ "_wf_" + str(weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)
+  experiment_name = "two_mass_vanilla_terms_big_0_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_af_" + af_str + "_lr_" + str(lr.numpy())+ "_expl_" + str(exp_len)+ "_steps_" + str(steps) +"_ds_" + str(data_loss_scl.numpy())+ "_ps_" + str(physics_scale.numpy())+ "_wf_" + str(weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)
   print("Config name: ", experiment_name)
   os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
   os.makedirs(result_folder_name + "/" + experiment_name+ "/plots", exist_ok=True)
@@ -401,6 +402,7 @@ def main():
   pinn.tf_epochs = training_epochs # todo integrate
   pinn.storage_path = plots_path # todo integrate
   pinn.terms_stop = tf.cast(terms_stop, tf.int32)
+  pinn.terms_stop2 = tf.cast(terms_stop2, tf.int32)
 
   pinn.fit()
 

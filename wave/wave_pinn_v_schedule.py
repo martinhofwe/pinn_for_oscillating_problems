@@ -61,9 +61,7 @@ class Logger(object):
     def log_train_start(self, model, show_summary=False):
         print("\nTraining started")
         print("================")
-        self.model = model
-
-        print(self.model.summary())
+        print(model.summary())
 
     def log_train_epoch(self, epoch, loss, custom="", is_iter=False):
         if self.epoch_counter % self.frequency == 0:
@@ -178,7 +176,7 @@ class PhysicsInformedNN(object):
         self.n_inputs = n_inputs
         self.optimizer = optimizer
         self.logger = logger
-        self.physics_scale = tf.constant(physics_scale, dtype=tf.float32)
+        self.physics_scale = tf.Variable(physics_scale, dtype=tf.float32)
         self.dtype = tf.float32
         self.p_norm = p_norm
 
@@ -189,7 +187,7 @@ class PhysicsInformedNN(object):
 
     # Defining custom loss
     @tf.function
-    def __loss(self, x, y_lbl, x_physics, y, x_semi_begin=None, semi_scale=None, p_norm=None, physiscs_scale=1.0):
+    def __loss(self, x, y_lbl, x_physics, y, x_semi_begin=None, semi_scale=None, p_norm=None, physics_scale=1.0):
 
         f_pred = self.f_model(x_physics)
         if x_semi_begin is not None:
@@ -204,13 +202,13 @@ class PhysicsInformedNN(object):
             physics_loss = tf.reduce_mean(f_pred ** 2)
         if p_norm == "l1":
             physics_loss = tf.reduce_mean(tf.math.abs(f_pred))
-
+        #tf.print("p_Scale: ", self.physics_scale)
         return data_loss + data_loss_semi + physics_scale * physics_loss # todo check if it wors as intened
 
     def __grad(self, x, y_lbl, x_physics, x_semi_begin, semi_scale):
         with tf.GradientTape() as tape:
             tape.watch(x)
-            loss_value = self.__loss(x, y_lbl, x_physics, self.model(x), x_semi_begin, semi_scale, p_norm=self.p_norm, physiscs_scale=self.physisc_scale)
+            loss_value = self.__loss(x, y_lbl, x_physics, self.model(x), x_semi_begin, semi_scale, p_norm=self.p_norm, physics_scale=self.physics_scale)
         return loss_value, tape.gradient(loss_value, self.__wrap_training_variables())
 
     def __wrap_training_variables(self):
@@ -339,7 +337,7 @@ class PhysicsInformedNN(object):
             self.optimizer.apply_gradients(zip(grads, self.__wrap_training_variables()))
             self.logger.log_train_epoch(epoch, loss_value)
 
-        self.logger.log_train_end(tf_epochs)
+        #self.logger.log_train_end(tf_epochs)
 
     def predict(self, x):
         y = self.model(x)
@@ -399,7 +397,6 @@ class PhysicsInformedNN(object):
 
 # from matlab script############################################################
 def main():
-    # tf.keras.backend.set_floatx('float32')
     task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
     #task_id = int(sys.argv[1])
     print("task_id: ", task_id)
@@ -420,11 +417,14 @@ def main():
 
     width = 1024
 
-    p_scale_dic = {0: 1, 1: 1e-4, 2: 1e-2, 3: 1e-5,
+    p_scale_dic = {0: 1, 1: 1e-4, 2: 1e-2, 3: 1,
                    4: 1, 5: 1e-4, 6: 1e-2, 7: 1e-5}
 
     physics_scale_new = p_scale_dic[task_id]
     physics_scale = 0.0
+    p_end_start = 2
+    if task_id == 3:
+      p_end_start = 99
 
     hidden_layers = 10  # layer_dic[task_id]
     layers = [3]  # input time and position x, y
@@ -439,7 +439,7 @@ def main():
     os.makedirs(result_folder_name, exist_ok=True)
 
     # fixed parameters
-    logger = Logger(frequency=1000)
+    logger = Logger(frequency=5_000)
 
     p_start = 0
     # parameters ########################################################################################################
@@ -487,6 +487,8 @@ def main():
     data_sampling = 1
     num_points = 10  # 200#4000#250
     x_data = time_steps[data_start:num_points + 1:data_sampling]
+    
+    print("x_data, ", x_data)
 
     y_data = wavefields[data_start:num_points + 1:data_sampling, :, :] * scaling_factor
 
@@ -531,6 +533,7 @@ def main():
                                                   locations=[locations_x, locations_y])
 
     plot_comparison(t, y_lbl_error, y_pred, considered_steps, plots_path + "beginning")
+   
 
     for i in range(meta_epochs):
         if i % 1000 == 0:
@@ -547,13 +550,9 @@ def main():
 
         if i == meta_epochs // 2:
             print("setting p scale " + str(physics_scale_new))
-            '''
-      f_pred, y_m1, y_m2, y_m1_dx, y_m2_dx, y_m1_dx2, y_m2_dx2 = pinn.f_model_detail(input_all)
-      plot_terms_detail(t, y_m2, y_lbl_m2, y_m1, y_lbl_m1, y_m2_dx, y_m2_dx_simul, y_m1_dx, y_m1_dx_simul, y_m2_dx2,
-                        y_m2_dx2_simul, y_m1_dx2, y_m1_dx2_simul, f_path_name= plots_path + "res_error_detail_before")
-      '''
-
             pinn.physics_scale = physics_scale_new
+            model_save  = pinn.model
+            model_save.save(result_folder_name + "/" + experiment_name + "/model", include_optimizer=True)
 
         # create new patch for training
         idx_pos_x = np.expand_dims(random.choices(np.arange(0, locations_x.shape[0]), k=batch_size), 1)
@@ -570,23 +569,34 @@ def main():
         if i >= meta_epochs // 2:
           if i % ((meta_epochs // 2) // time_steps.shape[0]) == 0: # todo clean up
               p_end += 1
-              p_end = max(p_end, time_steps.shape[0])
+              p_end = min(p_end, time_steps.shape[0]-1)
         else:
-            p_end = 1
+            p_end = p_end_start
 
-        idx_pos_p_x = np.expand_dims(random.choices(np.arange(0, locations_x.shape[0]), k=5),
-                                     1)  # todo needs rework? more points?
-        idx_pos_p_y = np.expand_dims(random.choices(np.arange(0, locations_y.shape[0]), k=5), 1)
         idx_time_p = np.expand_dims(np.arange(p_start_step, p_end), 1)
+        idx_pos_p_x = np.expand_dims(random.choices(np.arange(0, locations_x.shape[0]), k=(500//idx_time_p.shape[0])),1)  # todo needs rework? more points?
+        idx_pos_p_y = np.expand_dims(random.choices(np.arange(0, locations_y.shape[0]), k=(500//idx_time_p.shape[0])), 1)
+        #idx_time_p = np.expand_dims(np.arange(p_start_step, p_end), 1)
 
-        batch_pos_p_x = np.tile(idx_pos_p_x, (100, 1))
-        batch_pos_p_y = np.tile(idx_pos_p_y, (100, 1))
-        batch_time_p = np.expand_dims(np.repeat(time_steps[idx_time_p], 5), 1)
+        #batch_pos_p_x = np.tile(idx_pos_p_x, (100, 1))
+        #batch_pos_p_y = np.tile(idx_pos_p_y, (100, 1))
+        batch_pos_p_x = np.tile(idx_pos_p_x, (idx_time_p.shape[0], 1))
+        batch_pos_p_y = np.tile(idx_pos_p_y, (idx_time_p.shape[0], 1))
+        batch_time_p = np.expand_dims(np.repeat(time_steps[idx_time_p], 500//idx_time_p.shape[0]), 1)
+
+        # print(idx_time_p.shape)
+        # print(batch_pos_p_x.shape)
+        # print(batch_pos_p_y.shape)
+        # print(batch_time_p.shape)
+        # print("#")
+        # print(idx_pos_p_x.shape)
+        # print(idx_pos_p_y.shape)
 
         input_data_physics = tf.concat([batch_time_p, batch_pos_p_x, batch_pos_p_y], axis=-1)
 
         pinn.fit(input_data, data_lbl, input_data_physics, input_data_semi, y_data_semi_pseudo, pseudo_physics_norm,
                  tf_epochs, show_summary=show_summary)
+        
 
     with open(result_folder_name + "/" + experiment_name + "/loss.pkl", "wb") as fp:
         pickle.dump(logger.loss_over_meta, fp)
@@ -594,6 +604,9 @@ def main():
         pickle.dump(logger.loss_over_epoch, fp)
     with open(result_folder_name + "/" + experiment_name + "/p_end.pkl", "wb") as fp:
         pickle.dump([p_start, p_end], fp)
+
+    model_save  = pinn.model
+    model_save.save(result_folder_name + "/" + experiment_name + "/model_end", include_optimizer=True)
 
     pinn.model.save_weights(result_folder_name + "/" + experiment_name + "/_weights")
 
