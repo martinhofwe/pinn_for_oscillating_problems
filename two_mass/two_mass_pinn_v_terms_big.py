@@ -199,7 +199,7 @@ class PhysicsInformedNN(object):
     return [m1_loss_mean, m2_loss_mean]
 
   @tf.function
-  def train_step(self, x_col, epoch):
+  def train_step(self, x_col, epoch, physics_scale):
     with tf.GradientTape(persistent=True) as tape:
 
       # data loss / initial condition
@@ -207,7 +207,7 @@ class PhysicsInformedNN(object):
 
       # physics loss
       m1_p_loss, m2_p_loss = self.calc_physics_loss(x_col, epoch)
-      combined_weighted_loss = self.data_loss_scl*data_loss + self.physics_scale * (m1_p_loss + m2_p_loss)
+      combined_weighted_loss = self.data_loss_scl*data_loss + physics_scale * (m1_p_loss + m2_p_loss)
 
       # retrieve gradients
     grads = tape.gradient(combined_weighted_loss, self.model.weights)
@@ -228,7 +228,12 @@ class PhysicsInformedNN(object):
   def fit(self):
     self.logger.log_train_start(self)
     for epoch in range(self.tf_epochs):
-      loss_value, log_data, pred_parameters, physics_losses = self.train_step(self.x_physics, tf.cast(epoch, tf.int32))
+      if epoch < self.terms_stop:
+          physics_scale = self.physics_scale
+      else:
+          physics_scale = self.physics_scale2
+          print("Switching p loss: ", physics_scale)
+      loss_value, log_data, pred_parameters, physics_losses = self.train_step(self.x_physics, tf.cast(epoch, tf.int32), physics_scale)
       #loss_value, log_data, pred_parameters, physics_losses = self.train_step(self.sample_collocation_points(1_000)) # todo as parameter
       # log train loss and errors specified in logger error
       self.logger.log_train_epoch(epoch, loss_value, log_data)
@@ -251,8 +256,8 @@ def get_layer_list(nr_inputs, nr_outputs, nr_hidden_layers, width):
   return layers
 
 def main():
-  task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-  #task_id = int(sys.argv[1])
+  #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+  task_id = int(sys.argv[1])
   print("task_id: ", task_id)
 
   # Parameters that change based on task id ############################################################################
@@ -403,6 +408,7 @@ def main():
   pinn.storage_path = plots_path # todo integrate
   pinn.terms_stop = tf.cast(terms_stop, tf.int32)
   pinn.terms_stop2 = tf.cast(terms_stop2, tf.int32)
+  pinn.physics_scale2 = tf.cast(1e-6, tf.int32)
 
   pinn.fit()
 

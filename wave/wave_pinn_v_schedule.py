@@ -64,9 +64,9 @@ class Logger(object):
         print(model.summary())
 
     def log_train_epoch(self, epoch, loss, custom="", is_iter=False):
+        data_error, physics_error, y_pred, f_pred = self.__get_error_u()
+        self.loss_over_epoch.append([data_error, physics_error])
         if self.epoch_counter % self.frequency == 0:
-            data_error, physics_error, y_pred, f_pred = self.__get_error_u()
-            self.loss_over_epoch.append([data_error, physics_error])
             print(
                 f"{'nt_epoch' if is_iter else 'tf_epoch'} = {epoch:6d}  elapsed = {self.__get_elapsed()}  loss = {loss:.4e}  data error= {data_error:.4e}  physics error= {physics_error:.4e}" + custom)
 
@@ -346,27 +346,10 @@ class PhysicsInformedNN(object):
 
     def predict_multiple_images(self, considered_steps, locations):
         locs_x, locs_y = locations
-        '''
-    if self.layers[1] == 128:
-      y_lst_big = []
-      f_lst_big = []
-      for step in considered_steps:
-        tracked_time_steps = np.expand_dims(np.repeat(np.array(step), locations.shape[0]), 1)
-        input_data_pred = tf.cast(np.hstack((tracked_time_steps,  np.expand_dims(locations,1))), tf.float32)
-        # just because cant fit all into gpu:
-        y_lst = []
-        f_lst = []
-        for i in range(1,3):
-          y, f = self.predict(input_data_pred[(i-1)*45_000:45_000*i])
-          y_lst.append(y)
-          f_lst.append(f)
-        y_lst_big.append(tf.concat(y_lst, axis=0))
-        f_lst_big = tf.concat(f_lst, axis=0)
-    else:
-    '''
         y_lst_big = []
         f_lst_big = []
         for step in considered_steps:
+            #print("predicting ", step)
             tracked_time_steps = np.expand_dims(np.repeat(np.array(step), locs_x.shape[0] * locs_y.shape[0]), 1)
             input_data_pred = tf.cast(np.hstack((tracked_time_steps,
                                                  np.expand_dims(np.repeat(locs_x, locs_y.shape[0]), 1),
@@ -392,8 +375,6 @@ class PhysicsInformedNN(object):
             f_lst_big = tf.concat(f_lst, axis=0)
         return tf.squeeze(tf.concat(y_lst_big, axis=0)), tf.squeeze(tf.concat(f_lst_big, axis=0))
 
-        return tf.squeeze(tf.concat(y_lst_big, axis=0)), tf.squeeze(tf.concat(f_lst_big, axis=0))
-
 
 # from matlab script############################################################
 def main():
@@ -417,8 +398,7 @@ def main():
 
     width = 1024
 
-    p_scale_dic = {0: 1, 1: 1e-4, 2: 1e-2, 3: 1,
-                   4: 1, 5: 1e-4, 6: 1e-2, 7: 1e-5}
+    p_scale_dic = {0: 1, 1: 1e1, 2: 1e2, 3: 1e3, 4: 1e4}
 
     physics_scale_new = p_scale_dic[task_id]
     physics_scale = 0.0
@@ -446,9 +426,9 @@ def main():
     ppi = 0
     max_iter_overall = 1  #
     if width == 1024:
-        meta_epochs = 1_000_000  # todo without hard coded numbers
+        meta_epochs = 1_000_001  # todo without hard coded numbers
     else:
-        meta_epochs = 1_000_000
+        meta_epochs = 1_000_001
     lr = tf.Variable(1e-4)  # tf.Variable(1e-4)
     tf_epochs_warm_up = 2000
     tf_epochs_train = int(max_iter_overall / meta_epochs)
@@ -460,7 +440,7 @@ def main():
         learning_rate=lr,
         beta_1=0.8, decay=0.)
 
-    experiment_name = "wave_vanilla_schedule_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(
+    experiment_name = "wave_vanilla_schedule_half_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(
         hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_input_" + str(
         input_bool) + "_expl_" + str(exp_len) + "_ps_" + str(physics_scale_new) + "_pstart_" + str(
         p_start_step) + "_id_" + str(task_id)
@@ -525,7 +505,9 @@ def main():
                              velocity=velocity[0, 0], n_inputs=layers[0],
                              scaling_factor=scaling_factor, physics_scale=physics_scale,
                              p_norm=p_norm)  # to do change velocity!!!
-
+    print("before load")
+    pinn.model = tf.keras.models.load_model("wave_data/model")
+    print("after load ")
     try_next_semi_points = False
     input_data_semi, y_data_semi, y_data_semi_pseudo, pseudo_physics_norm, input_data_semi_new_pot, semi_candidates = None, None, None, None, None, None
 
@@ -535,7 +517,7 @@ def main():
     plot_comparison(t, y_lbl_error, y_pred, considered_steps, plots_path + "beginning")
    
 
-    for i in range(meta_epochs):
+    for i in range(500_000, meta_epochs, 1):
         if i % 1000 == 0:
             print(str(i) + " / " + str(meta_epochs - 1))
         if i % 25_000 == 0:
@@ -567,6 +549,8 @@ def main():
 
         # create physics loss batch
         if i >= meta_epochs // 2:
+          if i == meta_epochs // 2:
+                  p_end = p_end_start
           if i % ((meta_epochs // 2) // time_steps.shape[0]) == 0: # todo clean up
               p_end += 1
               p_end = min(p_end, time_steps.shape[0]-1)
@@ -610,8 +594,8 @@ def main():
 
     pinn.model.save_weights(result_folder_name + "/" + experiment_name + "/_weights")
 
-    plot_loss(logger.loss_over_meta, pinn.physics_scale, plots_path + "loss", scaled=False)
-    plot_loss(logger.loss_over_meta, pinn.physics_scale, plots_path + "loss_scaled", scaled=True)
+    plot_loss(logger.loss_over_epoch, pinn.physics_scale, plots_path + "loss", scaled=False)
+    plot_loss(logger.loss_over_epoch, pinn.physics_scale, plots_path + "loss_scaled", scaled=True)
 
     y_pred, f_pred = pinn.predict_multiple_images(considered_steps=considered_steps,
                                                   locations=[locations_x, locations_y])
