@@ -440,7 +440,7 @@ def main():
         learning_rate=lr,
         beta_1=0.8, decay=0.)
 
-    experiment_name = "wave_vanilla_schedule_half_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(
+    experiment_name = "wave_vanilla_schedule_short_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(
         hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_input_" + str(
         input_bool) + "_expl_" + str(exp_len) + "_ps_" + str(physics_scale_new) + "_pstart_" + str(
         p_start_step) + "_id_" + str(task_id)
@@ -452,11 +452,12 @@ def main():
 
     velocity = np.load('wave_data/velocity_00000000_const.npy')
     wavefields = wavefields_all[::4]
-    wavefields = np.float32(wavefields[:101, :, :])
+    nr_time_steps = 50
+    wavefields = np.float32(wavefields[:nr_time_steps, :, :])
     time_steps_all = np.linspace(0, 1.024, num=2048)
     time_steps = time_steps_all[::4]
 
-    time_steps = np.float32(time_steps[:101])
+    time_steps = np.float32(time_steps[:nr_time_steps])
     time_step_size = 0.002
 
     # wavefields_flat = wavefields.reshape(wavefields.shape[0], wavefields.shape[1]*wavefields.shape[2])
@@ -478,11 +479,11 @@ def main():
     locations_y = np.arange(0, wavefields.shape[2])
 
     # define which timesteps should be used to calcualte the eror metric printed (all time steps might be to computionally intensive)
-    considered_steps = np.array([0, 12, 25, 37, 50, 62, 75, 87, 100])
+    considered_steps = np.array([0, 12, 25, 37])
     y_lbl_error = wavefields[considered_steps, :, :]
     # plotting
     plots_path = result_folder_name + "/" + experiment_name + "/"
-    plot_solution(t, velocity, wavefields, plots_path + "exact_solution")
+    #plot_solution(t, velocity, wavefields, plots_path + "exact_solution")
 
     def error():
         # y, f = pinn.predict(error_input_data)
