@@ -64,9 +64,9 @@ class Logger(object):
         print(model.summary())
 
     def log_train_epoch(self, epoch, loss, custom="", is_iter=False):
-        data_error, physics_error, y_pred, f_pred = self.__get_error_u()
-        self.loss_over_epoch.append([data_error, physics_error])
         if self.epoch_counter % self.frequency == 0:
+            data_error, physics_error, y_pred, f_pred = self.__get_error_u()
+            self.loss_over_epoch.append([data_error, physics_error])
             print(
                 f"{'nt_epoch' if is_iter else 'tf_epoch'} = {epoch:6d}  elapsed = {self.__get_elapsed()}  loss = {loss:.4e}  data error= {data_error:.4e}  physics error= {physics_error:.4e}" + custom)
 
@@ -349,7 +349,7 @@ class PhysicsInformedNN(object):
         y_lst_big = []
         f_lst_big = []
         for step in considered_steps:
-            #print("predicting ", step)
+            print("predicting ", step)
             tracked_time_steps = np.expand_dims(np.repeat(np.array(step), locs_x.shape[0] * locs_y.shape[0]), 1)
             input_data_pred = tf.cast(np.hstack((tracked_time_steps,
                                                  np.expand_dims(np.repeat(locs_x, locs_y.shape[0]), 1),
@@ -357,15 +357,7 @@ class PhysicsInformedNN(object):
             # just because cant fit all into gpu:
             y_lst = []
             f_lst = []
-            # nr_splits = input_data_pred.shape[1]//500
-            # for i in range(0,nr_splits):
-            #   print(input_data_pred[i*500:(i+1)*500].shape)
-            #   y, f = self.predict(input_data_pred[i*500:(i+1)*500])
-            #   y_lst.append(y)
-            #   f_lst.append(f)
-            # y_lst_big.append(tf.concat(y_lst, axis=0))
-            # f_lst_big.append(tf.concat(f_lst, axis=0))
-
+            
             nr_splits = input_data_pred.shape[0] // 500
             for i in range(0, nr_splits):
                 y, f = self.predict(input_data_pred[i * 500:(i + 1) * 500])

@@ -12,7 +12,7 @@ import pickle
 import scipy.io
 
 from data_simulation import get_simulated_data_two_mass
-from plot_wave import plot_solution, plot_comparison, plot_loss, plot_terms_diff
+from plot_wave_short import plot_solution, plot_comparison, plot_loss, plot_terms_diff
 
 np.random.seed(1234)
 tf.random.set_seed(1234)
@@ -64,9 +64,9 @@ class Logger(object):
         print(model.summary())
 
     def log_train_epoch(self, epoch, loss, custom="", is_iter=False):
-        data_error, physics_error, y_pred, f_pred = self.__get_error_u()
-        self.loss_over_epoch.append([data_error, physics_error])
         if self.epoch_counter % self.frequency == 0:
+            data_error, physics_error, y_pred, f_pred = self.__get_error_u()
+            self.loss_over_epoch.append([data_error, physics_error])
             print(
                 f"{'nt_epoch' if is_iter else 'tf_epoch'} = {epoch:6d}  elapsed = {self.__get_elapsed()}  loss = {loss:.4e}  data error= {data_error:.4e}  physics error= {physics_error:.4e}" + custom)
 
@@ -349,7 +349,7 @@ class PhysicsInformedNN(object):
         y_lst_big = []
         f_lst_big = []
         for step in considered_steps:
-            #print("predicting ", step)
+            print("predicting ", step)
             tracked_time_steps = np.expand_dims(np.repeat(np.array(step), locs_x.shape[0] * locs_y.shape[0]), 1)
             input_data_pred = tf.cast(np.hstack((tracked_time_steps,
                                                  np.expand_dims(np.repeat(locs_x, locs_y.shape[0]), 1),
@@ -357,15 +357,7 @@ class PhysicsInformedNN(object):
             # just because cant fit all into gpu:
             y_lst = []
             f_lst = []
-            # nr_splits = input_data_pred.shape[1]//500
-            # for i in range(0,nr_splits):
-            #   print(input_data_pred[i*500:(i+1)*500].shape)
-            #   y, f = self.predict(input_data_pred[i*500:(i+1)*500])
-            #   y_lst.append(y)
-            #   f_lst.append(f)
-            # y_lst_big.append(tf.concat(y_lst, axis=0))
-            # f_lst_big.append(tf.concat(f_lst, axis=0))
-
+            
             nr_splits = input_data_pred.shape[0] // 500
             for i in range(0, nr_splits):
                 y, f = self.predict(input_data_pred[i * 500:(i + 1) * 500])
@@ -398,7 +390,7 @@ def main():
 
     width = 1024
 
-    p_scale_dic = {0: 1, 1: 1e1, 2: 1e2, 3: 1e3, 4: 1e4}
+    p_scale_dic = {0: 1, 1: 1e20, 2: 1e15, 3: 1e10, 4: 1e1, 5: 1e-10, 6: 1e-10}
 
     physics_scale_new = p_scale_dic[task_id]
     physics_scale = 0.0
@@ -440,7 +432,7 @@ def main():
         learning_rate=lr,
         beta_1=0.8, decay=0.)
 
-    experiment_name = "wave_vanilla_schedule_short_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(
+    experiment_name = "wave_new_vanilla_schedule_half_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(
         hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_input_" + str(
         input_bool) + "_expl_" + str(exp_len) + "_ps_" + str(physics_scale_new) + "_pstart_" + str(
         p_start_step) + "_id_" + str(task_id)
@@ -452,13 +444,13 @@ def main():
 
     velocity = np.load('wave_data/velocity_00000000_const.npy')
     wavefields = wavefields_all[::4]
-    nr_time_steps = 50
-    wavefields = np.float32(wavefields[:nr_time_steps, :, :])
+    wavefields = np.float32(wavefields[:51, :, :])
     time_steps_all = np.linspace(0, 1.024, num=2048)
     time_steps = time_steps_all[::4]
 
-    time_steps = np.float32(time_steps[:nr_time_steps])
+    time_steps = np.float32(time_steps[:51])
     time_step_size = 0.002
+    print("timesteps: ", time_steps)
 
     # wavefields_flat = wavefields.reshape(wavefields.shape[0], wavefields.shape[1]*wavefields.shape[2])
 
@@ -483,7 +475,7 @@ def main():
     y_lbl_error = wavefields[considered_steps, :, :]
     # plotting
     plots_path = result_folder_name + "/" + experiment_name + "/"
-    #plot_solution(t, velocity, wavefields, plots_path + "exact_solution")
+    plot_solution(t, velocity, wavefields, plots_path + "exact_solution")
 
     def error():
         # y, f = pinn.predict(error_input_data)
