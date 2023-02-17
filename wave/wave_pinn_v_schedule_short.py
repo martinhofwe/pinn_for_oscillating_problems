@@ -132,7 +132,7 @@ def last_time():
 
 
 class PhysicsInformedNN(object):
-    def __init__(self, layers, h_activation_function, optimizer, logger, velocity, n_inputs=3, scaling_factor=1e12,
+    def __init__(self, layers, h_activation_function, optimizer, logger, velocity, n_inputs=3,
                  physics_scale=1.00, p_norm="l2"):
 
         self.layers = layers
@@ -171,8 +171,7 @@ class PhysicsInformedNN(object):
                 self.sizes_w.append(int(width * layers[1]))
                 self.sizes_b.append(int(width if i != 0 else layers[1]))
 
-        self.scaling_factor = tf.constant(scaling_factor, dtype=tf.float32)
-        self.scaling_factor64 = tf.constant(scaling_factor, dtype=tf.float32)
+
         self.n_inputs = n_inputs
         self.optimizer = optimizer
         self.logger = logger
@@ -240,50 +239,6 @@ class PhysicsInformedNN(object):
         u_dt2 = tape.gradient(u_dt, t)
         del tape
         return (u_dx2 + u_dy2) - (u_dt2 / (self.velocity ** 2))
-
-    # The actual PINN
-    def f_model_detail(self, x):
-        assert False
-        #########################################
-        # https://colab.research.google.com/github/janblechschmidt/PDEsByNNs/blob/main/PINN_Solver.ipynb#scrollTo=azOBDHMoZEkn
-        with tf.GradientTape(persistent=True) as tape:
-            # Split t and x to compute partial derivatives
-            x_ = tf.expand_dims(x[..., 0], -1)
-            u = tf.expand_dims(x[..., 1], -1)
-            u_dx = tf.expand_dims(x[..., 2], -1)
-            # ym1_lbl = tf.expand_dims(x[...,3],-1)
-
-            # Variables t and x are watched during tape
-            # to compute derivatives u_t and u_x
-            tape.watch(x_)
-            x_watched_full = tf.concat([x_, u, u_dx], axis=-1)
-
-            # Determine residual
-            y = self.model(x_watched_full)
-            y_m1 = tf.expand_dims(y[:, 0], -1)
-            y_m2 = tf.expand_dims(y[:, 1], -1)
-            y_m1_dx = tape.gradient(y_m1, x_)
-            y_m2_dx = tape.gradient(y_m2, x_)
-        y_m1_dx2 = tape.gradient(y_m1_dx, x_)
-        y_m2_dx2 = tape.gradient(y_m2_dx, x_)
-        del tape
-
-        #####################################
-
-        y_m1_dx = tf.expand_dims(y_m1_dx[..., 0], -1)
-        y_m2_dx = tf.expand_dims(y_m2_dx[..., 0], -1)
-
-        y_m1_dx2 = tf.expand_dims(y_m1_dx2[..., 0], -1)
-        y_m2_dx2 = tf.expand_dims(y_m2_dx2[..., 0], -1)
-
-        m2_loss = ((-self.c2 * (y_m2 - y_m1) - self.d2 * (y_m2_dx - y_m1_dx)) / self.m2) - (
-                    y_m2_dx2 / self.scaling_factor)
-        # p loss for m1
-        # m1_loss = (-y_m1_dx2 / self.scaling_factor) + (self.c1 * (u - y_m1) + self.d1 * (u_dx - y_m1_dx) + self.c2 * (y_m2 - y_m1) + self.d2 * (y_m2_dx - y_m1_dx)) / self.m1 old and wrong
-        m1_loss = ((self.c1 * (u - y_m1) + self.d1 * (u_dx - y_m1_dx) + self.c2 * (y_m2 - y_m1) + self.d2 * (
-                    y_m2_dx - y_m1_dx)) / self.m1) - (y_m1_dx2 / self.scaling_factor)
-
-        return tf.concat([m1_loss, m2_loss], axis=1), y_m1, y_m2, y_m1_dx, y_m2_dx, y_m1_dx2, y_m2_dx2
 
     def get_params(self, numpy=False):
         return self.k
@@ -374,29 +329,18 @@ def main():
     #task_id = int(sys.argv[1])
     print("task_id: ", task_id)
     input_bool = False
-    if task_id % 2 == 0:
-        act_func = "tanh"
-        af_str = "tanh"
-    else:
-        act_func = "sine"
-        af_str = "sin"
 
     act_func = "soft_plus"
     af_str = "soft_plus"
 
-    exp_len = 400
     p_norm = "l1"
-    p_start_step = 1
+    p_start_step = 0
 
     width = 1024
-
-    p_scale_dic = {0: 1, 1: 1e20, 2: 1e15, 3: 1e10, 4: 1e1, 5: 1e-10, 6: 1e-10}
-
-    physics_scale_new = p_scale_dic[task_id]
+    
+    physics_scale_new = 50.0
     physics_scale = 0.0
-    p_end_start = 2
-    if task_id == 3:
-      p_end_start = 99
+    p_end_start = 1
 
     hidden_layers = 10  # layer_dic[task_id]
     layers = [3]  # input time and position x, y
@@ -407,7 +351,6 @@ def main():
     print("layers: ", layers)
 
     result_folder_name = 'res_wave'
-    # if not os.path.exists(result_folder_name):
     os.makedirs(result_folder_name, exist_ok=True)
 
     # fixed parameters
@@ -415,27 +358,18 @@ def main():
 
     p_start = 0
     # parameters ########################################################################################################
-    ppi = 0
-    max_iter_overall = 1  #
-    if width == 1024:
-        meta_epochs = 1_000_001  # todo without hard coded numbers
-    else:
-        meta_epochs = 1_000_001
-    lr = tf.Variable(1e-4)  # tf.Variable(1e-4)
-    tf_epochs_warm_up = 2000
-    tf_epochs_train = int(max_iter_overall / meta_epochs)
-    tf_epochs = max_iter_overall
+    meta_epochs = 1_000_001  # todo without hard coded numbers
+    tf_epochs = 1
+    
+    lr = tf.Variable(1e-5)
+    
     batch_size = 500
 
-    mode_frame = False
-    tf_optimizer = tf.keras.optimizers.Adam(
-        learning_rate=lr,
-        beta_1=0.8, decay=0.)
-
-    experiment_name = "wave_new_vanilla_schedule_half_ppi_" + str(ppi) + "_frame_" + str(mode_frame) + "_h_l_" + str(
-        hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_input_" + str(
-        input_bool) + "_expl_" + str(exp_len) + "_ps_" + str(physics_scale_new) + "_pstart_" + str(
-        p_start_step) + "_id_" + str(task_id)
+    tf_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+    #############################################################################################
+    experiment_name = "reworked_wave_vanilla_schedule_" + "_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_ps_" + str(physics_scale_new) + "_pstart_" + str(p_start_step) + "_id_" + str(task_id)
+    
+    
     os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
     os.makedirs(result_folder_name + "/" + experiment_name + "/plots", exist_ok=True)
 
@@ -443,27 +377,29 @@ def main():
     wavefields_all = np.load('wave_data/const_wave.npy')
 
     velocity = np.load('wave_data/velocity_00000000_const.npy')
-    wavefields = wavefields_all[::4]
-    wavefields = np.float32(wavefields[:51, :, :])
-    time_steps_all = np.linspace(0, 1.024, num=2048)
+    wavefields = wavefields_all[::4] # every fourth because data creation script uses delta_t = 0.0005 -> we want delta_t = 0.002
+    print("wavefields, delta_t 0.002: ", wavefields.shape)
+    time_steps_all = np.linspace(0, 1.024, num=2048) # macht sinn für 2048 samples a 0.0005 step_size todo not hard coded
     time_steps = time_steps_all[::4]
-
-    time_steps = np.float32(time_steps[:51])
-    time_step_size = 0.002
-    print("timesteps: ", time_steps)
-
-    # wavefields_flat = wavefields.reshape(wavefields.shape[0], wavefields.shape[1]*wavefields.shape[2])
+    
+    # reduce size of data
+    # set t0 t a point where the source term is negligible
+    train_data_start = 100
+    train_data_end = 201
+    wavefields = np.float32(wavefields[train_data_start:train_data_end, :, :])
+    time_steps = np.float32(time_steps[train_data_start:train_data_end])
+    print("wavefields reduced, delta_t 0.002: ", wavefields.shape)
 
     data_start = 0
-    scaling_factor = 1
     # Getting the data
     data_sampling = 1
-    num_points = 10  # 200#4000#250
-    x_data = time_steps[data_start:num_points + 1:data_sampling]
+    num_points = 10
+    x_data = time_steps[data_start:num_points:data_sampling]
     
+    print("x_data, ", x_data.shape)
     print("x_data, ", x_data)
 
-    y_data = wavefields[data_start:num_points + 1:data_sampling, :, :] * scaling_factor
+    y_data = wavefields[data_start:num_points:data_sampling, :, :]
 
     y_lbl = wavefields[data_start:, :, :]
     t = time_steps[data_start:]
@@ -471,11 +407,15 @@ def main():
     locations_y = np.arange(0, wavefields.shape[2])
 
     # define which timesteps should be used to calcualte the eror metric printed (all time steps might be to computionally intensive)
-    considered_steps = np.array([0, 12, 25, 37])
+    considered_steps = np.array([0, 5, 25, 50, 75, 100])
+    print("t considered times: ", t[considered_steps])
     y_lbl_error = wavefields[considered_steps, :, :]
     # plotting
     plots_path = result_folder_name + "/" + experiment_name + "/"
     plot_solution(t, velocity, wavefields, plots_path + "exact_solution")
+    
+    print("velocity")
+    print(np.min(velocity), np.max(velocity))
 
     def error():
         # y, f = pinn.predict(error_input_data)
@@ -486,28 +426,17 @@ def main():
 
     logger.set_error_fn(error)
 
-    print("Frame mode: ", str(mode_frame))
-    print("ppi", ppi)
-
     ### set data in logger for plots
     logger.t = t
     logger.y_lbl_all = y_lbl
     logger.plot_path = result_folder_name + "/" + experiment_name
 
     pinn = PhysicsInformedNN(layers, h_activation_function=act_func, optimizer=tf_optimizer, logger=logger,
-                             velocity=velocity[0, 0], n_inputs=layers[0],
-                             scaling_factor=scaling_factor, physics_scale=physics_scale,
+                             velocity=velocity[0, 0], n_inputs=layers[0], physics_scale=physics_scale,
                              p_norm=p_norm)  # to do change velocity!!!
-    #print("before load")
-    #pinn.model = tf.keras.models.load_model("wave_data/model")
-    #print("after load ")
-    try_next_semi_points = False
-    input_data_semi, y_data_semi, y_data_semi_pseudo, pseudo_physics_norm, input_data_semi_new_pot, semi_candidates = None, None, None, None, None, None
 
-    y_pred, f_pred = pinn.predict_multiple_images(considered_steps=considered_steps,
-                                                  locations=[locations_x, locations_y])
-
-    plot_comparison(t, y_lbl_error, y_pred, considered_steps, plots_path + "beginning")
+    #y_pred, f_pred = pinn.predict_multiple_images(considered_steps=considered_steps, locations=[locations_x, locations_y]) #todo uncomment
+    #plot_comparison(t, y_lbl_error, y_pred, considered_steps, plots_path + "beginning")
    
 
     for i in range(0, meta_epochs, 1):
@@ -524,11 +453,16 @@ def main():
             show_summary = False
 
         if i == meta_epochs // 2:
-            print("setting p scale " + str(physics_scale_new))
             pinn.physics_scale = physics_scale_new
-            #model_save  = pinn.model
-            #model_save.save(result_folder_name + "/" + experiment_name + "/model", include_optimizer=True)
-
+            p_end = p_end_start
+        
+        if i >= meta_epochs // 2:
+          if i % ((meta_epochs // 2) // time_steps.shape[0]) == 0: # todo clean up
+              p_end += 1
+              p_end = min(p_end, time_steps.shape[0]-1)
+        else:
+            p_end = p_end_start
+            
         # create new patch for training
         idx_pos_x = np.expand_dims(random.choices(np.arange(0, locations_x.shape[0]), k=batch_size), 1)
         idx_pos_y = np.expand_dims(random.choices(np.arange(0, locations_y.shape[0]), k=batch_size), 1)
@@ -539,40 +473,22 @@ def main():
         input_data = tf.concat([batch_time, idx_pos_x, idx_pos_y], axis=-1)  # timestep and position
 
         data_lbl = y_data[idx_time, idx_pos_x, idx_pos_y]
+        
+        
 
-        # create physics loss batch
-        if i >= meta_epochs // 2:
-          if i == meta_epochs // 2:
-                  p_end = p_end_start
-          if i % ((meta_epochs // 2) // time_steps.shape[0]) == 0: # todo clean up
-              p_end += 1
-              p_end = min(p_end, time_steps.shape[0]-1)
-        else:
-            p_end = p_end_start
+        # 500 random samples aus t, x, y
+        nr_p_points = 500
+        t_points = np.expand_dims((time_steps[p_end] - time_steps[p_start_step]) * np.random.rand(nr_p_points).astype('float32')
+ + time_steps[p_start_step], 1)
+        idx_pos_p_x = np.expand_dims(random.choices(np.arange(0, locations_x.shape[0]), k=nr_p_points),1)  # todo needs rework? more points?
+        idx_pos_p_y = np.expand_dims(random.choices(np.arange(0, locations_y.shape[0]), k=nr_p_points), 1)
+        input_data_physics = tf.concat([t_points, idx_pos_p_x, idx_pos_p_y], axis=-1)
+        #print("###")
+        #print(input_data_physics)
 
-        idx_time_p = np.expand_dims(np.arange(p_start_step, p_end), 1)
-        idx_pos_p_x = np.expand_dims(random.choices(np.arange(0, locations_x.shape[0]), k=(500//idx_time_p.shape[0])),1)  # todo needs rework? more points?
-        idx_pos_p_y = np.expand_dims(random.choices(np.arange(0, locations_y.shape[0]), k=(500//idx_time_p.shape[0])), 1)
-        #idx_time_p = np.expand_dims(np.arange(p_start_step, p_end), 1)
+        input_data_physics = tf.concat([t_points, idx_pos_p_x, idx_pos_p_y], axis=-1)
 
-        #batch_pos_p_x = np.tile(idx_pos_p_x, (100, 1))
-        #batch_pos_p_y = np.tile(idx_pos_p_y, (100, 1))
-        batch_pos_p_x = np.tile(idx_pos_p_x, (idx_time_p.shape[0], 1))
-        batch_pos_p_y = np.tile(idx_pos_p_y, (idx_time_p.shape[0], 1))
-        batch_time_p = np.expand_dims(np.repeat(time_steps[idx_time_p], 500//idx_time_p.shape[0]), 1)
-
-        # print(idx_time_p.shape)
-        # print(batch_pos_p_x.shape)
-        # print(batch_pos_p_y.shape)
-        # print(batch_time_p.shape)
-        # print("#")
-        # print(idx_pos_p_x.shape)
-        # print(idx_pos_p_y.shape)
-
-        input_data_physics = tf.concat([batch_time_p, batch_pos_p_x, batch_pos_p_y], axis=-1)
-
-        pinn.fit(input_data, data_lbl, input_data_physics, input_data_semi, y_data_semi_pseudo, pseudo_physics_norm,
-                 tf_epochs, show_summary=show_summary)
+        pinn.fit(input_data, data_lbl, input_data_physics, tf_epochs=tf_epochs, show_summary=show_summary)
         
 
     with open(result_folder_name + "/" + experiment_name + "/loss.pkl", "wb") as fp:

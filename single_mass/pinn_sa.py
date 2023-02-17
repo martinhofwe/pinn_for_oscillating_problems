@@ -577,8 +577,8 @@ class PhysicsInformedNN(object):
 
 # from matlab script############################################################
 def main():
-  task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-  #task_id = int(sys.argv[1])
+  #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+  task_id = int(sys.argv[1])
   print("task_id: ", task_id)
   if task_id % 2 == 0:
     act_func = tf.nn.tanh
@@ -643,7 +643,6 @@ def main():
 
 
   # Getting the data
-
   x_data = np.expand_dims(tExci[data_start], 1)
   y_data = np.expand_dims(y_m1_simul[data_start]*scaling_factor, 1)
   y_lbl = y_m1_simul[data_start:]*scaling_factor

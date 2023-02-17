@@ -62,7 +62,6 @@ CLIM = (1500,3600)
 ############################################################################################################
 def plot_solution(t, velocity, wavefields, f_path_name):
     selected_timesteps = [0, 25, 50, 75, 100]
-    print("plot_solution")
     #for s in selected_timesteps:
     #    print("step: ", t[s])
     wavefields = wavefields.reshape(wavefields.shape[0], 300, 300) # todo not hardcoded
@@ -71,7 +70,6 @@ def plot_solution(t, velocity, wavefields, f_path_name):
     s = 5 * np.mean(np.abs(wavefields))
 
     for count, step in enumerate(selected_timesteps):
-        print(step)
         plt.subplot(1, len(selected_timesteps), (count + 1))
         plt.imshow(-wavefields[step, :, :].T, vmin=-s, vmax=s)
         plt.gca().set_anchor('C')  # centre plot

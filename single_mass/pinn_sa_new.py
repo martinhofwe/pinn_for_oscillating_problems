@@ -121,15 +121,14 @@ class PhysicsInformedNN(object):
         plot_loss(self.logger.loss_over_epoch, self.physics_scale, self.storage_path + "loss", scaled=False)
         plot_loss(self.logger.loss_over_epoch, self.physics_scale, self.storage_path + "loss_scaled", scaled=True)
         plot_solution(self.input_all, self.y_lbl_all, self.x_ic, self.y_lbl_ic, pred_y_all, None, self.storage_path + "/plots/" + "res_"+str(epoch))
-        tf.print(physics_loss.shape)
         plot_terms_diff(self.input_all, physics_loss, pred_y_all, self.y_lbl_all,
-                        self.storage_path + "res_error_all", p_plot_start=1)
+                        self.storage_path + "res_error_all", p_plot_start=0)
 
         plt.close('all')
 
     # The actual PINN
     def f_model(self, x_):
-                with tf.GradientTape() as tape:
+        with tf.GradientTape() as tape:
             tape.watch(x_)
             y_pred = self.pred_with_grad(x_)
             y_dx = y_pred[:, 1:]
@@ -232,21 +231,54 @@ def get_layer_list(nr_inputs, nr_outputs, nr_hidden_layers, width):
 
 
 def main():
-    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    task_id = int(sys.argv[1])
+    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    #task_id = int(sys.argv[1])
     print("task_id: ", task_id)
 
     # Parameters that change based on task id ############################################################################
-    act_func = "tanh"
-    af_str = "tanh"
+    if task_id < 100:
+        act_func = "tanh"
+        af_str = "tanh"
+        task_id_intern = task_id
+    else:
+        act_func = "sine"
+        af_str = "sine"
+        task_id_intern = task_id-100
     
-    scl_dic = {0: 100, 1: 100, 2: 10, 3: 10, 4:1, 5:1, 6:0.1, 7:0.1}
+    print("task id ", task_id)
+    print(task_id_intern)
+    scales = [0.1, 1, 10, 100]
+    nn_depth = [1, 2, 3, 4, 5]
+    
+    if 0 <= task_id_intern < 25:
+        scale_m1 = scales[0]
+        s_f = 0
+    elif 25 <= task_id_intern < 50:
+        scale_m1 = scales[1]
+        s_f = 1
+    elif 50 <= task_id_intern < 75:
+        scale_m1 = scales[2]
+        s_f = 2
+    elif 75 <= task_id_intern < 100:
+        scale_m1 = scales[3]
+        s_f = 3
+    
+    if (0+25*s_f) <= task_id_intern < (5+25*s_f):
+        h_layers = nn_depth[0]
+    elif (5+25*s_f) <= task_id_intern < (10+25*s_f):
+        h_layers = nn_depth[1]
+    elif (10+25*s_f) <= task_id_intern < (15+25*s_f):
+        h_layers = nn_depth[2]
+    elif (15+25*s_f) <= task_id_intern < (20+25*s_f):
+        h_layers = nn_depth[3]
+    elif (20+25*s_f) <= task_id_intern < (25+25*s_f):
+        h_layers = nn_depth[4]
 
     ic_points_idx = [0]
     d_p_string = "vanilla"
 
     print("ic points: ", ic_points_idx)
-    hidden_layers = 5
+    hidden_layers = h_layers
 
     weight_factor = 2
 
@@ -254,7 +286,7 @@ def main():
     physics_scale = tf.Variable(1e-4)
     ######################################################################################################################
     # Fixed parameters PINN
-    training_epochs = 600_000
+    training_epochs = 900_000
     width = 32
     layers = get_layer_list(nr_inputs=1, nr_outputs=1, nr_hidden_layers=hidden_layers, width=width)
 
@@ -263,7 +295,7 @@ def main():
 
     # Data simulation
     start_vec = [1, 0]
-    m1 = (30000/2)*scl_dic[task_id]
+    m1 = (30000/2)*scale_m1
     css = 0.5e6 * 2
     dss = 1.5e4 * 2
     exp_len = 4000
@@ -300,8 +332,8 @@ def main():
     os.makedirs(result_folder_name, exist_ok=True)
     experiment_name = "one_mass_sa_martin_tc_fixeds_h_l_" + str(hidden_layers) + "_w_" + str(
         width) + "_af_" + af_str + "_lr_" + str(lr.numpy()) + "_expl_" + str(exp_len) + "_steps_" + str(
-        steps) + "_ps_" + str(physics_scale.numpy()) + "_wf_" + str(
-        weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)
+        steps) + "_ps_" + str(physics_scale.numpy()) + "_sf_" + str(
+        scale_m1) + "_dp_" + d_p_string + "_id_" + str(task_id)
     print("Config name: ", experiment_name)
     os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
     os.makedirs(result_folder_name + "/" + experiment_name + "/plots", exist_ok=True)
