@@ -1,7 +1,7 @@
 import random
 import sys
 
-import scipy.signal as sig
+#import scipy.signal as sig
 import numpy as np
 import tensorflow as tf
 import time
@@ -9,22 +9,13 @@ from datetime import datetime
 import os
 import matplotlib.pyplot as plt
 import pickle
-import scipy.io
+#import scipy.io
 
-from data_simulation import get_simulated_data_two_mass
-from plot_wave_short import plot_solution, plot_comparison, plot_loss, plot_terms_diff
+from plot_wave import plot_solution, plot_comparison, plot_loss
 
-np.random.seed(1234)
-tf.random.set_seed(1234)
+#np.random.seed(1234)
+#tf.random.set_seed(1234)
 
-y_lbl_m1_g = tf.Variable(0.0)
-y_lbl_m2_g = tf.Variable(0.0)
-y_lbl_m1_dx_g = tf.Variable(0.0)
-y_lbl_m2_dx_g = tf.Variable(0.0)
-y_lbl_m1_dx2_g = tf.Variable(0.0)
-y_lbl_m2_dx2_g = tf.Variable(0.0)
-u_lbl_g = tf.Variable(0.0)
-up_lbl_g = tf.Variable(0.0)
 
 
 class Logger(object):
@@ -146,11 +137,10 @@ class PhysicsInformedNN(object):
                     self.model.add(tf.keras.layers.Dense(
                         width, activation=tf.math.sin,
                         kernel_initializer='glorot_normal'))
-                elif h_activation_function == "sine" and False:
-                    assert False
-                    print("tanh af")
+                elif h_activation_function == "sine_all":
+                    print("sine af")
                     self.model.add(tf.keras.layers.Dense(
-                        width, activation=tf.nn.tanh,
+                        width, activation=tf.math.sin,
                         kernel_initializer='glorot_normal'))
                 else:
                     print("soft plus af")
@@ -187,16 +177,10 @@ class PhysicsInformedNN(object):
     # Defining custom loss
     @tf.function
     def __loss(self, x, y_lbl, x_physics, y, x_semi_begin=None, semi_scale=None, p_norm=None, physics_scale=1.0):
-
+        tf.print(y_lbl.shape)
         f_pred = self.f_model(x_physics)
-        if x_semi_begin is not None:
-            assert False  # todo fix for two mass
-            data_loss = tf.reduce_mean((y_lbl[:x_semi_begin] - y[:x_semi_begin]) ** 2)
-            data_loss_semi = tf.reduce_mean(semi_scale * ((y_lbl[x_semi_begin:] - y[x_semi_begin:]) ** 2))
-        else:
-            data_loss_semi = 0.0
-            # np.mean((y_lbl_m1 - y[:, 0])**2), np.mean((y_lbl_m2 - y[:, 1])**2),
-            data_loss = tf.reduce_mean((y_lbl - y) ** 2)
+        data_loss_semi = 0.0
+        data_loss = tf.reduce_mean((y_lbl - y) ** 2)
         if p_norm == "l2":
             physics_loss = tf.reduce_mean(f_pred ** 2)
         if p_norm == "l1":
@@ -275,17 +259,7 @@ class PhysicsInformedNN(object):
         x = tf.convert_to_tensor(x, dtype=self.dtype)
         y_lbl = tf.convert_to_tensor(y_lbl, dtype=self.dtype)
         x_physics = tf.convert_to_tensor(x_physics, dtype=self.dtype)
-
-        # todo remove
         x_semi_begin = None
-        if x_semi is not None:
-            x_semi = tf.convert_to_tensor(x_semi, dtype=self.dtype)
-            y_lbl_semi = tf.convert_to_tensor(y_semi, dtype=self.dtype)
-            semi_scale = tf.convert_to_tensor(semi_scale, dtype=self.dtype)
-            x_semi_begin = x.shape[0]
-            x = tf.concat([x, x_semi], 0)
-            y_lbl = tf.concat([y_lbl, y_lbl_semi], 0)
-
         # self.logger.log_train_opt("Adam")
         for epoch in range(tf_epochs):
             loss_value, grads = self.__grad(x, y_lbl, x_physics, x_semi_begin, semi_scale)
@@ -299,13 +273,12 @@ class PhysicsInformedNN(object):
         f = self.f_model(x)  # todo change
         return y, f
 
-    def predict_multiple_images(self, considered_steps, locations):
+    def predict_multiple_images(self, considered_times, locations):
         locs_x, locs_y = locations
         y_lst_big = []
         f_lst_big = []
-        for step in considered_steps:
-            print("predicting ", step)
-            tracked_time_steps = np.expand_dims(np.repeat(np.array(step), locs_x.shape[0] * locs_y.shape[0]), 1)
+        for t_step in considered_times: 
+            tracked_time_steps = np.expand_dims(np.repeat(np.array(t_step), locs_x.shape[0] * locs_y.shape[0]), 1)
             input_data_pred = tf.cast(np.hstack((tracked_time_steps,
                                                  np.expand_dims(np.repeat(locs_x, locs_y.shape[0]), 1),
                                                  np.expand_dims(np.tile(locs_y, locs_x.shape[0]), 1))), tf.float32)
@@ -313,9 +286,9 @@ class PhysicsInformedNN(object):
             y_lst = []
             f_lst = []
             
-            nr_splits = input_data_pred.shape[0] // 500
+            nr_splits = input_data_pred.shape[0] // 300
             for i in range(0, nr_splits):
-                y, f = self.predict(input_data_pred[i * 500:(i + 1) * 500])
+                y, f = self.predict(input_data_pred[i * 300:(i + 1) * 300])
                 y_lst.append(y)
                 f_lst.append(f)
             y_lst_big.append(tf.concat(y_lst, axis=0))
@@ -325,24 +298,32 @@ class PhysicsInformedNN(object):
 
 # from matlab script############################################################
 def main():
-    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    #task_id = int(sys.argv[1])
+    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    task_id = int(sys.argv[1])
     print("task_id: ", task_id)
     input_bool = False
-
-    act_func = "soft_plus"
-    af_str = "soft_plus"
+    if task_id < 5:
+        act_func = "soft_plus"
+        af_str = "soft_plus"
+    elif 5 <= task_id < 10:
+        act_func = "sine"
+        af_str = "sine"
+    elif 10 <= task_id < 15:
+        act_func = "sine_all"
+        af_str = "sine_all"
 
     p_norm = "l1"
     p_start_step = 0
 
-    width = 1024
-    
-    physics_scale_new = 50.0
+    width = 2#1024
+    if task_id == 0:
+        physics_scale_new = 50.0
+    else:
+        physics_scale_new = 0
     physics_scale = 0.0
     p_end_start = 1
 
-    hidden_layers = 10  # layer_dic[task_id]
+    hidden_layers = 2#10  # layer_dic[task_id]
     layers = [3]  # input time and position x, y
     for i in range(hidden_layers + 1):
         layers.append(width)
@@ -367,7 +348,7 @@ def main():
 
     tf_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
     #############################################################################################
-    experiment_name = "reworked_wave_vanilla_schedule_" + "_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_ps_" + str(physics_scale_new) + "_pstart_" + str(p_start_step) + "_id_" + str(task_id)
+    experiment_name = "wave_ben_schedule_" + "_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_ps_" + str(physics_scale_new) + "_pstart_" + str(p_start_step) + "_id_" + str(task_id)
     
     
     os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
@@ -380,21 +361,22 @@ def main():
     wavefields = wavefields_all[::4] # every fourth because data creation script uses delta_t = 0.0005 -> we want delta_t = 0.002
     print("wavefields, delta_t 0.002: ", wavefields.shape)
     time_steps_all = np.linspace(0, 1.024, num=2048) # macht sinn für 2048 samples a 0.0005 step_size todo not hard coded
-    time_steps = time_steps_all[::4]
+    time_steps_init= time_steps_all[::4]
     
     # reduce size of data
     # set t0 t a point where the source term is negligible
     train_data_start = 100
     train_data_end = 201
     wavefields = np.float32(wavefields[train_data_start:train_data_end, :, :])
-    time_steps = np.float32(time_steps[train_data_start:train_data_end])
+    time_steps_init = np.float32(time_steps_init[train_data_start:train_data_end])
     print("wavefields reduced, delta_t 0.002: ", wavefields.shape)
 
     data_start = 0
     # Getting the data
     data_sampling = 1
     num_points = 10
-    x_data = time_steps[data_start:num_points:data_sampling]
+    t = time_steps_init[data_start:]
+    x_data = t[data_start:num_points:data_sampling]
     
     print("x_data, ", x_data.shape)
     print("x_data, ", x_data)
@@ -402,14 +384,17 @@ def main():
     y_data = wavefields[data_start:num_points:data_sampling, :, :]
 
     y_lbl = wavefields[data_start:, :, :]
-    t = time_steps[data_start:]
+    
     locations_x = np.arange(0, wavefields.shape[1])
     locations_y = np.arange(0, wavefields.shape[2])
-
+    
+    #print(locations_x)
+    #assert False
     # define which timesteps should be used to calcualte the eror metric printed (all time steps might be to computionally intensive)
-    considered_steps = np.array([0, 5, 25, 50, 75, 100])
-    print("t considered times: ", t[considered_steps])
-    y_lbl_error = wavefields[considered_steps, :, :]
+    considered_steps_idx = np.array([0, 5, 9, 25, 50, 75, 100])
+    considered_times = t[considered_steps_idx]
+    print("t considered times: ", considered_times)
+    y_lbl_error = wavefields[considered_steps_idx, :, :]
     # plotting
     plots_path = result_folder_name + "/" + experiment_name + "/"
     plot_solution(t, velocity, wavefields, plots_path + "exact_solution")
@@ -419,7 +404,7 @@ def main():
 
     def error():
         # y, f = pinn.predict(error_input_data)
-        y, f = pinn.predict_multiple_images(considered_steps=considered_steps, locations=[locations_x, locations_y])
+        y, f = pinn.predict_multiple_images(considered_times=considered_times, locations=[locations_x, locations_y])
         data_error = np.mean((y_lbl_error.flatten() - y) ** 2)  # to do check flattened correctly?
         physics_error = np.mean(f ** 2)
         return data_error, physics_error, y, f
@@ -435,18 +420,26 @@ def main():
                              velocity=velocity[0, 0], n_inputs=layers[0], physics_scale=physics_scale,
                              p_norm=p_norm)  # to do change velocity!!!
 
-    #y_pred, f_pred = pinn.predict_multiple_images(considered_steps=considered_steps, locations=[locations_x, locations_y]) #todo uncomment
-    #plot_comparison(t, y_lbl_error, y_pred, considered_steps, plots_path + "beginning")
-   
 
     for i in range(0, meta_epochs, 1):
         if i % 1000 == 0:
             print(str(i) + " / " + str(meta_epochs - 1))
         if i % 25_000 == 0:
-            y_pred, f_pred = pinn.predict_multiple_images(considered_steps=considered_steps,
+            y_pred, f_pred = pinn.predict_multiple_images(considered_times=considered_times,
                                                           locations=[locations_x, locations_y])
-            plot_comparison(t, y_lbl_error, y_pred, considered_steps, plots_path + "/plots/" + str(i))
+            plot_comparison(considered_times=considered_times, wavefields=y_lbl_error, wavefields_pred=y_pred, f_path_name = plots_path + "/plots/" + str(i)) # considered_times, wavefields, wavefields_pred,  f_path_name
+            
+            with open(result_folder_name + "/" + experiment_name + "/loss.pkl", "wb") as fp:
+                pickle.dump(logger.loss_over_meta, fp)
+            with open(result_folder_name + "/" + experiment_name + "/loss_epoch.pkl", "wb") as fp:
+                pickle.dump(logger.loss_over_epoch, fp)
+
+            plot_loss(logger.loss_over_epoch, pinn.physics_scale, plots_path + "loss", scaled=False)
+            plot_loss(logger.loss_over_epoch, pinn.physics_scale, plots_path + "loss_scaled", scaled=True)
+            
             plt.close('all')
+            
+            
         if i == 0:
             show_summary = True
         else:
@@ -457,15 +450,15 @@ def main():
             p_end = p_end_start
         
         if i >= meta_epochs // 2:
-          if i % ((meta_epochs // 2) // time_steps.shape[0]) == 0: # todo clean up
+          if i % ((meta_epochs // 2) // t.shape[0]) == 0: # todo clean up
               p_end += 1
-              p_end = min(p_end, time_steps.shape[0]-1)
+              p_end = min(p_end, t.shape[0]-1)
         else:
             p_end = p_end_start
             
         # create new patch for training
-        idx_pos_x = np.expand_dims(random.choices(np.arange(0, locations_x.shape[0]), k=batch_size), 1)
-        idx_pos_y = np.expand_dims(random.choices(np.arange(0, locations_y.shape[0]), k=batch_size), 1)
+        idx_pos_x = np.expand_dims(random.choices(locations_x, k=batch_size), 1)
+        idx_pos_y = np.expand_dims(random.choices(locations_y, k=batch_size), 1)
         idx_time = np.expand_dims(random.choices(np.arange(0, x_data.shape[0]), k=batch_size), 1)
 
         batch_time = x_data[idx_time]
@@ -473,19 +466,16 @@ def main():
         input_data = tf.concat([batch_time, idx_pos_x, idx_pos_y], axis=-1)  # timestep and position
 
         data_lbl = y_data[idx_time, idx_pos_x, idx_pos_y]
-        
+        print("y_data lbl", y_data.shape)
+        print("data lbl", data_lbl.shape)
+        assert False
         
 
         # 500 random samples aus t, x, y
         nr_p_points = 500
-        t_points = np.expand_dims((time_steps[p_end] - time_steps[p_start_step]) * np.random.rand(nr_p_points).astype('float32')
- + time_steps[p_start_step], 1)
-        idx_pos_p_x = np.expand_dims(random.choices(np.arange(0, locations_x.shape[0]), k=nr_p_points),1)  # todo needs rework? more points?
-        idx_pos_p_y = np.expand_dims(random.choices(np.arange(0, locations_y.shape[0]), k=nr_p_points), 1)
-        input_data_physics = tf.concat([t_points, idx_pos_p_x, idx_pos_p_y], axis=-1)
-        #print("###")
-        #print(input_data_physics)
-
+        t_points = np.expand_dims((t[p_end] - t[p_start_step]) * np.random.rand(nr_p_points).astype('float32') + t[p_start_step], 1)
+        idx_pos_p_x = np.expand_dims(random.choices(locations_x, k=nr_p_points),1) 
+        idx_pos_p_y = np.expand_dims(random.choices(locations_y, k=nr_p_points), 1)
         input_data_physics = tf.concat([t_points, idx_pos_p_x, idx_pos_p_y], axis=-1)
 
         pinn.fit(input_data, data_lbl, input_data_physics, tf_epochs=tf_epochs, show_summary=show_summary)
@@ -498,31 +488,23 @@ def main():
     with open(result_folder_name + "/" + experiment_name + "/p_end.pkl", "wb") as fp:
         pickle.dump([p_start, p_end], fp)
 
-    model_save  = pinn.model
-    model_save.save(result_folder_name + "/" + experiment_name + "/model_end", include_optimizer=True)
+    #model_save  = pinn.model
+    #model_save.save(result_folder_name + "/" + experiment_name + "/model_end", include_optimizer=True)
 
-    pinn.model.save_weights(result_folder_name + "/" + experiment_name + "/_weights")
+    #pinn.model.save_weights(result_folder_name + "/" + experiment_name + "/_weights")
 
     plot_loss(logger.loss_over_epoch, pinn.physics_scale, plots_path + "loss", scaled=False)
     plot_loss(logger.loss_over_epoch, pinn.physics_scale, plots_path + "loss_scaled", scaled=True)
 
-    y_pred, f_pred = pinn.predict_multiple_images(considered_steps=considered_steps,
+    y_pred, f_pred = pinn.predict_multiple_images(considered_times=considered_times,
                                                   locations=[locations_x, locations_y])
-    plot_comparison(t, y_lbl_error, y_pred, considered_steps, plots_path + "end")
-
-    y_pred, f_pred = pinn.predict_multiple_images(considered_steps=np.array([0, 2, 4, 6, 8, 10, 12, 14, 16]),
-                                                  locations=[locations_x, locations_y])
-    plot_comparison(t, y_lbl[[0, 2, 4, 6, 8, 10, 12, 14, 16]].flatten(), y_pred, considered_steps,
-                    plots_path + "learned")
-    # y_pred, f_pred = pinn.predict(input_all)
-
-    # plot_solution(t, y_lbl_m2, y_lbl_m1, x_data, y_data_m2, y_data_m1, y_pred, plots_path + "res")
-
-    # plot_terms_diff(t, f_pred, y_pred, y_lbl_all, plots_path + "res_error_all", p_plot_start=p_start_step)
-
-    # f_pred, y_m1, y_m2, y_m1_dx, y_m2_dx, y_m1_dx2, y_m2_dx2 = pinn.f_model_detail(input_all)
-
-    # plot_terms_detail(t, y_m2, y_lbl_m2, y_m1, y_lbl_m1, y_m2_dx, y_m2_dx_simul, y_m1_dx, y_m1_dx_simul, y_m2_dx2,y_m2_dx2_simul, y_m1_dx2, y_m1_dx2_simul, f_path_name=plots_path + "res_error_detail_after")
+    
+    plot_comparison(considered_times=considered_times, wavefields=y_lbl_error, wavefields_pred=y_pred, f_path_name = plots_path + "end")
+    
+    
+    
+    y_pred, f_pred = pinn.predict_multiple_images(considered_times=x_data, locations=[locations_x, locations_y])
+    plot_comparison(considered_times=x_data, wavefields=y_lbl[data_start:num_points:data_sampling].flatten(), wavefields_pred=y_pred, f_path_name = plots_path + "input_data_comp")
 
     print("Finished")
 

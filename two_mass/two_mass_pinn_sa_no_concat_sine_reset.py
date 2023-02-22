@@ -245,21 +245,16 @@ class PhysicsInformedNN(object):
         m1_loss, m2_loss = self.f_model(x_col)
         m1_loss_mean = tf.reduce_mean(tf.square(self.physics_weights_1)*tf.square(m1_loss))
         m2_loss_mean = tf.reduce_mean(tf.square(self.physics_weights_2)*tf.square(m2_loss))
-        return [m1_loss_mean, m2_loss_mean]
-
-    def calc_loss_ic_old(self):
-        diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)
-        ic_loss = tf.reduce_mean(tf.square(diff))
-        return ic_loss
-
-    def calc_physics_loss_old(self, x_col):
-        m1_loss, m2_loss = self.f_model(x_col)
-        m1_loss_mean = tf.reduce_mean(tf.square(m1_loss))
-        m2_loss_mean = tf.reduce_mean(tf.square(m2_loss))
+        tf.print(m1_loss_mean, m2_loss_mean)
         return [m1_loss_mean, m2_loss_mean]
 
     @tf.function
-    def train_step(self, x_col):
+    def train_step(self, x_col, reset):
+        if reset: 
+            self.physics_weights_1.assign(tf.random.uniform([self.x_physics.shape[0], 1], dtype=self.dtype))
+            self.physics_weights_2.assign(self.physics_weights_2* 0.0)
+            self.data_weights_1.assign(self.data_weights_1* 0.0)
+            self.data_weights_2.assign(self.data_weights_2* 0.0)
         with tf.GradientTape(persistent=True) as tape:
             # data loss / initial condition
             data_loss = self.calc_loss_ic()
@@ -296,7 +291,18 @@ class PhysicsInformedNN(object):
         self.logger.log_train_start(self)
         for epoch in range(self.tf_epochs):
             #loss_value, log_data, pred_parameters, physics_losses = self.train_step(self.sample_collocation_points(1_000))
-            loss_value, log_data, pred_parameters, physics_losses = self.train_step(self.x_physics)
+            if self.reset_param == 0 or epoch % self.reset_param == 0:
+                print("reset = True")
+                #print(self.physics_weights_1[:10])
+                #self.reset_weights()
+                #self.physics_weights_1 =  tf.zeros([self.x_physics.shape[0], 1], dtype=self.dtype)
+                #self.physics_weights_2 =  tf.zeros([self.x_physics.shape[0], 1], dtype=self.dtype)
+                #self.data_weights_1 =  tf.zeros([self.x_ic.shape[0], 1], dtype=self.dtype)
+                #self.data_weights_2 =  tf.zeros([self.x_ic.shape[0], 1], dtype=self.dtype)
+                reset = True
+                #print("reseted sa weights")
+                #print(self.physics_weights_1[:10])
+            loss_value, log_data, pred_parameters, physics_losses = self.train_step(self.x_physics, reset)
 
             # log train loss and errors specified in logger error
             self.logger.log_train_epoch(epoch, loss_value, log_data)
@@ -304,16 +310,7 @@ class PhysicsInformedNN(object):
             if epoch % 25_000 == 0:
                 self.store_intermediate_result(epoch, pred_parameters, physics_losses)
                 
-            if self.reset_param == 0 or epoch % self.reset_param == 0:
-                #print("reset sa weights")
-                #print(self.physics_weights_1[:10])
-                #self.reset_weights()
-                self.physics_weights_1 =  tf.zeros([self.x_physics.shape[0], 1], dtype=self.dtype)
-                self.physics_weights_2 =  tf.zeros([self.x_physics.shape[0], 1], dtype=self.dtype)
-                self.data_weights_1 =  tf.zeros([self.x_ic.shape[0], 1], dtype=self.dtype)
-                self.data_weights_2 =  tf.zeros([self.x_ic.shape[0], 1], dtype=self.dtype)
-                #print("reseted sa weights")
-                #print(self.physics_weights_1[:10])
+
         self.logger.log_train_end(self.tf_epochs, log_data)
 
     def predict(self, x):
@@ -331,8 +328,8 @@ def get_layer_list(nr_inputs, nr_outputs, nr_hidden_layers, width):
 
 
 def main():
-    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    #task_id = int(sys.argv[1])
+    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    task_id = int(sys.argv[1])
     print("task_id: ", task_id)
 
     # Parameters that change based on task id ############################################################################

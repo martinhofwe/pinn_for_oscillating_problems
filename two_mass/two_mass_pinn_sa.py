@@ -314,8 +314,8 @@ def get_layer_list(nr_inputs, nr_outputs, nr_hidden_layers, width):
 
 
 def main():
-    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    #task_id = int(sys.argv[1])
+    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    task_id = int(sys.argv[1])
     print("task_id: ", task_id)
 
     # Parameters that change based on task id ############################################################################
@@ -373,7 +373,6 @@ def main():
     #end = 6
     #exp_len = 750
     #steps = 4_001
-
     ###
 
     start_vec = [1.0, 0.0, 0.5, 0.0]  # pos m2, dx pos m2, pos m1, dx pos m1
@@ -406,6 +405,8 @@ def main():
     y_lbl_ic = tf.constant(y_data_all, dtype=tf.float32)
     x_physics = tf.convert_to_tensor(input_data_physics,
                                      dtype=tf.float32)  # not used in the moment since we randomly sample physic points
+    
+    print(x_physics.shape)
 
     # test set, used to calcualte logged loss not used in training
     y_lbl_m1 = y_m1_simul[data_start:]
