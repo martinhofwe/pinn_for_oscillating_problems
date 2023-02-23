@@ -177,7 +177,6 @@ class PhysicsInformedNN(object):
     # Defining custom loss
     @tf.function
     def __loss(self, x, y_lbl, x_physics, y, x_semi_begin=None, semi_scale=None, p_norm=None, physics_scale=1.0):
-        tf.print(y_lbl.shape)
         f_pred = self.f_model(x_physics)
         data_loss_semi = 0.0
         data_loss = tf.reduce_mean((y_lbl - y) ** 2)
@@ -185,7 +184,6 @@ class PhysicsInformedNN(object):
             physics_loss = tf.reduce_mean(f_pred ** 2)
         if p_norm == "l1":
             physics_loss = tf.reduce_mean(tf.math.abs(f_pred))
-        #tf.print("p_Scale: ", self.physics_scale)
         return data_loss + data_loss_semi + physics_scale * physics_loss # todo check if it wors as intened
 
     def __grad(self, x, y_lbl, x_physics, x_semi_begin, semi_scale):
@@ -199,15 +197,14 @@ class PhysicsInformedNN(object):
         return var
 
     # The actual PINN
-    def f_model(self, input):
+    def f_model(self, input_p):
         #########################################
         # https://colab.research.google.com/github/janblechschmidt/PDEsByNNs/blob/main/PINN_Solver.ipynb#scrollTo=azOBDHMoZEkn
+        t = tf.expand_dims(input_p[:, 0], -1) # todo check
+        x = tf.expand_dims(input_p[:, 1], -1)
+        y = tf.expand_dims(input_p[:, 2], -1)
         with tf.GradientTape(persistent=True) as tape:
             # Split t (time) and x (position) to compute partial derivatives
-            t = tf.expand_dims(input[..., 0], -1)
-            x = tf.expand_dims(input[..., 1], -1)
-            y = tf.expand_dims(input[..., 2], -1)
-
             tape.watch(t)
             tape.watch(x)
             tape.watch(y)
@@ -222,7 +219,8 @@ class PhysicsInformedNN(object):
         u_dy2 = tape.gradient(u_dy, y)
         u_dt2 = tape.gradient(u_dt, t)
         del tape
-        return (u_dx2 + u_dy2) - (u_dt2 / (self.velocity ** 2))
+        return (u_dx2 + u_dy2) - (u_dt2 / (self.velocity ** 2)) # todo check
+    
 
     def get_params(self, numpy=False):
         return self.k
@@ -285,7 +283,6 @@ class PhysicsInformedNN(object):
             # just because cant fit all into gpu:
             y_lst = []
             f_lst = []
-            
             nr_splits = input_data_pred.shape[0] // 300
             for i in range(0, nr_splits):
                 y, f = self.predict(input_data_pred[i * 300:(i + 1) * 300])
@@ -298,8 +295,8 @@ class PhysicsInformedNN(object):
 
 # from matlab script############################################################
 def main():
-    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    task_id = int(sys.argv[1])
+    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    #task_id = int(sys.argv[1])
     print("task_id: ", task_id)
     input_bool = False
     if task_id < 5:
@@ -315,15 +312,12 @@ def main():
     p_norm = "l1"
     p_start_step = 0
 
-    width = 2#1024
-    if task_id == 0:
-        physics_scale_new = 50.0
-    else:
-        physics_scale_new = 0
+    width = 1024
+    physics_scale_new = 50.0
     physics_scale = 0.0
     p_end_start = 1
 
-    hidden_layers = 2#10  # layer_dic[task_id]
+    hidden_layers = 10  # layer_dic[task_id]
     layers = [3]  # input time and position x, y
     for i in range(hidden_layers + 1):
         layers.append(width)
@@ -348,7 +342,7 @@ def main():
 
     tf_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
     #############################################################################################
-    experiment_name = "wave_ben_schedule_" + "_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_ps_" + str(physics_scale_new) + "_pstart_" + str(p_start_step) + "_id_" + str(task_id)
+    experiment_name = "wave_ben2_schedule_" + "_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_ps_" + str(physics_scale_new) + "_pstart_" + str(p_start_step) + "_id_" + str(task_id)
     
     
     os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
@@ -385,11 +379,12 @@ def main():
 
     y_lbl = wavefields[data_start:, :, :]
     
-    locations_x = np.arange(0, wavefields.shape[1])
-    locations_y = np.arange(0, wavefields.shape[2])
+    locations_x = (np.arange(0, wavefields.shape[1]) * 5) + 2.5 # 300 × 300 grid with a spacing of 5 m in each direction Xmax = 1500 m in both directions + 2,5 to arrive in the middle of the grid
+    locations_y = (np.arange(0, wavefields.shape[2]) * 5) + 2.5 
     
-    #print(locations_x)
-    #assert False
+    
+    print(locations_x)
+    print(locations_x.shape)
     # define which timesteps should be used to calcualte the eror metric printed (all time steps might be to computionally intensive)
     considered_steps_idx = np.array([0, 5, 9, 25, 50, 75, 100])
     considered_times = t[considered_steps_idx]
@@ -450,33 +445,37 @@ def main():
             p_end = p_end_start
         
         if i >= meta_epochs // 2:
-          if i % ((meta_epochs // 2) // t.shape[0]) == 0: # todo clean up
+          if i % ((meta_epochs // 2) // (t.shape[0]+1)) == 0: # todo clean up
               p_end += 1
               p_end = min(p_end, t.shape[0]-1)
         else:
             p_end = p_end_start
             
         # create new patch for training
-        idx_pos_x = np.expand_dims(random.choices(locations_x, k=batch_size), 1)
-        idx_pos_y = np.expand_dims(random.choices(locations_y, k=batch_size), 1)
+        idx_pos_x = np.expand_dims(random.choices(np.arange(0, wavefields.shape[1]), k=batch_size), 1)
+        idx_pos_y = np.expand_dims(random.choices(np.arange(0, wavefields.shape[2]), k=batch_size), 1)
+        batch_loc_x = locations_x[idx_pos_x]
+        batch_loc_y = locations_y[idx_pos_y]
+        
         idx_time = np.expand_dims(random.choices(np.arange(0, x_data.shape[0]), k=batch_size), 1)
 
         batch_time = x_data[idx_time]
 
-        input_data = tf.concat([batch_time, idx_pos_x, idx_pos_y], axis=-1)  # timestep and position
+        input_data = tf.concat([batch_time, batch_loc_x, batch_loc_y], axis=-1)  # timestep and position
 
         data_lbl = y_data[idx_time, idx_pos_x, idx_pos_y]
-        print("y_data lbl", y_data.shape)
-        print("data lbl", data_lbl.shape)
-        assert False
         
+        #print(input_data.shape)
+        #print(input_data[:10])
+        #print(data_lbl.shape)
+
 
         # 500 random samples aus t, x, y
         nr_p_points = 500
         t_points = np.expand_dims((t[p_end] - t[p_start_step]) * np.random.rand(nr_p_points).astype('float32') + t[p_start_step], 1)
-        idx_pos_p_x = np.expand_dims(random.choices(locations_x, k=nr_p_points),1) 
-        idx_pos_p_y = np.expand_dims(random.choices(locations_y, k=nr_p_points), 1)
-        input_data_physics = tf.concat([t_points, idx_pos_p_x, idx_pos_p_y], axis=-1)
+        batch_loc_p_x = np.expand_dims(random.choices(locations_x, k=nr_p_points),1) 
+        batch_loc_p_y = np.expand_dims(random.choices(locations_y, k=nr_p_points), 1)
+        input_data_physics = tf.concat([t_points, batch_loc_p_x, batch_loc_p_y], axis=-1)
 
         pinn.fit(input_data, data_lbl, input_data_physics, tf_epochs=tf_epochs, show_summary=show_summary)
         

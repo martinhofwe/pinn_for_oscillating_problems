@@ -177,7 +177,6 @@ class PhysicsInformedNN(object):
     # Defining custom loss
     @tf.function
     def __loss(self, x, y_lbl, x_physics, y, x_semi_begin=None, semi_scale=None, p_norm=None, physics_scale=1.0):
-
         f_pred = self.f_model(x_physics)
         data_loss_semi = 0.0
         data_loss = tf.reduce_mean((y_lbl - y) ** 2)
@@ -185,7 +184,6 @@ class PhysicsInformedNN(object):
             physics_loss = tf.reduce_mean(f_pred ** 2)
         if p_norm == "l1":
             physics_loss = tf.reduce_mean(tf.math.abs(f_pred))
-        #tf.print("p_Scale: ", self.physics_scale)
         return data_loss + data_loss_semi + physics_scale * physics_loss # todo check if it wors as intened
 
     def __grad(self, x, y_lbl, x_physics, x_semi_begin, semi_scale):
@@ -199,15 +197,14 @@ class PhysicsInformedNN(object):
         return var
 
     # The actual PINN
-    def f_model(self, input):
+    def f_model(self, input_p):
         #########################################
         # https://colab.research.google.com/github/janblechschmidt/PDEsByNNs/blob/main/PINN_Solver.ipynb#scrollTo=azOBDHMoZEkn
+        t = tf.expand_dims(input_p[:, 0], -1) # todo check
+        x = tf.expand_dims(input_p[:, 1], -1)
+        y = tf.expand_dims(input_p[:, 2], -1)
         with tf.GradientTape(persistent=True) as tape:
             # Split t (time) and x (position) to compute partial derivatives
-            t = tf.expand_dims(input[..., 0], -1)
-            x = tf.expand_dims(input[..., 1], -1)
-            y = tf.expand_dims(input[..., 2], -1)
-
             tape.watch(t)
             tape.watch(x)
             tape.watch(y)
@@ -222,7 +219,8 @@ class PhysicsInformedNN(object):
         u_dy2 = tape.gradient(u_dy, y)
         u_dt2 = tape.gradient(u_dt, t)
         del tape
-        return (u_dx2 + u_dy2) - (u_dt2 / (self.velocity ** 2))
+        return (u_dx2 + u_dy2) - (u_dt2 / (self.velocity ** 2)) # todo check
+    
 
     def get_params(self, numpy=False):
         return self.k
@@ -285,7 +283,6 @@ class PhysicsInformedNN(object):
             # just because cant fit all into gpu:
             y_lst = []
             f_lst = []
-            
             nr_splits = input_data_pred.shape[0] // 300
             for i in range(0, nr_splits):
                 y, f = self.predict(input_data_pred[i * 300:(i + 1) * 300])
@@ -311,8 +308,8 @@ def get_grid_spacing(specified_nr_points, array_size):
 
 # from matlab script############################################################
 def main():
-    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    task_id = int(sys.argv[1])
+    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    #task_id = int(sys.argv[1])
     print("task_id: ", task_id)
     input_bool = False
     if task_id < 5:
@@ -328,15 +325,12 @@ def main():
     p_norm = "l1"
     p_start_step = 0
 
-    width = 2#1024
-    if task_id == 0:
-        physics_scale_new = 50.0
-    else:
-        physics_scale_new = 0
+    width = 1024
+    physics_scale_new = 50.0
     physics_scale = 0.0
     p_end_start = 1
 
-    hidden_layers = 2#10  # layer_dic[task_id]
+    hidden_layers = 10  # layer_dic[task_id]
     layers = [3]  # input time and position x, y
     for i in range(hidden_layers + 1):
         layers.append(width)
@@ -357,8 +351,7 @@ def main():
     
     lr = tf.Variable(1e-5)
     
-    p_points_per_ts = 100
-    d_points_per_ts = 100
+    #batch_size = 500
 
     tf_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
     #############################################################################################
@@ -394,19 +387,17 @@ def main():
     
     print("x_data, ", x_data.shape)
     print("x_data, ", x_data)
-    print(time_steps_init.shape)
-    print(time_steps_init)
-    #assert False
 
     y_data = wavefields[data_start:num_points:data_sampling, :, :]
 
     y_lbl = wavefields[data_start:, :, :]
     
-    locations_x = np.arange(0, wavefields.shape[1])
-    locations_y = np.arange(0, wavefields.shape[2])
+    locations_x = (np.arange(0, wavefields.shape[1]) * 5) + 2.5 # 300 × 300 grid with a spacing of 5 m in each direction Xmax = 1500 m in both directions + 2,5 to arrive in the middle of the grid
+    locations_y = (np.arange(0, wavefields.shape[2]) * 5) + 2.5 
     
-    #print(locations_x)
-    #assert False
+    
+    print(locations_x)
+    print(locations_x.shape)
     # define which timesteps should be used to calcualte the eror metric printed (all time steps might be to computionally intensive)
     considered_steps_idx = np.array([0, 5, 9, 25, 50, 75, 100])
     considered_times = t[considered_steps_idx]
@@ -432,50 +423,54 @@ def main():
     logger.t = t
     logger.y_lbl_all = y_lbl
     logger.plot_path = result_folder_name + "/" + experiment_name
-    
-    
-    #################
-    # create new patch for training
-    data_grid_spacing = get_grid_spacing(d_points_per_ts, locations_x.shape[0])
-    idx_pos_x = locations_x[0::data_grid_spacing]
-    print(idx_pos_x[:10])
-    print(idx_pos_x.shape)
-    idx_pos_y = locations_y[0::data_grid_spacing]
-    print("###")
-    print(idx_pos_y.shape)
-    idx_time = x_data
-    print("idx_time, ", idx_time.shape)
-    tracked_time_steps = np.expand_dims(np.repeat(np.array(idx_time), idx_pos_x.shape[0] * idx_pos_y.shape[0]), 1)
-    print("tracked_time_steps, ", tracked_time_steps.shape)
-    print(np.expand_dims(np.repeat(idx_pos_x, idx_time.shape[0]*idx_pos_y.shape[0]), 1).shape)
-    print("idx_time.shape[0]*idx_pos_x.shape[0]", idx_time.shape[0]*idx_pos_x.shape[0])
-    print(np.tile(idx_pos_y, idx_time.shape[0]*idx_pos_x.shape[0]).shape)
-    train_data = tf.cast(np.hstack((tracked_time_steps, np.expand_dims(np.repeat(np.expand_dims(idx_pos_x, 1), idx_time.shape[0]*idx_pos_y.shape[0]), 1),np.expand_dims(np.tile(idx_pos_y, idx_time.shape[0]*idx_pos_x.shape[0]), 1))), tf.float32)
-    
-    test = np.arange(0, locations_x.shape[0], data_grid_spacing) 
-    test2 = np.arange(data_start, num_points, data_sampling)
-    train_data_lbl = y_data[:, 0::data_grid_spacing, 0::data_grid_spacing]
-    train_data_lbl2 = y_data[test2, test, test]
-    print("todo here weitermachen")
-    print(train_data_lbl.shape)
-    print(train_data_lbl2.shape)
-    print(train_data.shape)
-    print(train_data[:10])
-    assert False
-    #########
 
     pinn = PhysicsInformedNN(layers, h_activation_function=act_func, optimizer=tf_optimizer, logger=logger,
                              velocity=velocity[0, 0], n_inputs=layers[0], physics_scale=physics_scale,
                              p_norm=p_norm)  # to do change velocity!!!
     
+    ####
+    #####################################################################################################################
+    # create new patch for training
+    d_points_per_ts = 100
+    p_points_per_ts = 100
+    
+    # create boundary input data
+    data_grid_spacing = get_grid_spacing(d_points_per_ts, locations_x.shape[0])
+    idx_pos_x = np.expand_dims(np.arange(0, wavefields.shape[1])[0::data_grid_spacing], 1)
+    idx_pos_y = np.expand_dims(np.arange(0, wavefields.shape[2])[0::data_grid_spacing], 1)
 
-    # 500 random samples aus t, x, y
-    t_points = np.expand_dims((t[p_end] - t[p_start_step]) * np.random.rand(nr_p_points).astype('float32') + t[p_start_step], 1)
-    idx_pos_p_x = np.expand_dims(random.choices(locations_x, k=nr_p_points),1) 
-    idx_pos_p_y = np.expand_dims(random.choices(locations_y, k=nr_p_points), 1)
-    input_data_physics = tf.concat([t_points, idx_pos_p_x, idx_pos_p_y], axis=-1)
+    idx_time = np.expand_dims(np.arange(0, x_data.shape[0]), 1)
+    batch_time = x_data[idx_time]
+
+    batch_time_steps = np.expand_dims(np.repeat(np.array(batch_time), idx_pos_x.shape[0] * idx_pos_y.shape[0]), 1)
+    batch_pos_x = np.expand_dims(np.repeat(locations_x[idx_pos_x], idx_time.shape[0]*idx_pos_y.shape[0]), 1)
+    batch_pos_y = np.expand_dims(np.tile(np.squeeze(locations_y[idx_pos_y]), idx_time.shape[0]*idx_pos_x.shape[0]), 1)
 
 
+    train_data = tf.cast(np.hstack((batch_time_steps, batch_pos_x ,batch_pos_y)), tf.float32)
+    
+    batch_time_idx = np.expand_dims(np.repeat(np.array(idx_time), idx_pos_x.shape[0] * idx_pos_y.shape[0]), 1)
+    batch_idx_x = np.expand_dims(np.repeat(idx_pos_x, idx_time.shape[0]*idx_pos_y.shape[0]), 1)
+    batch_idx_y = np.expand_dims(np.tile(np.squeeze(idx_pos_y), idx_time.shape[0]*idx_pos_x.shape[0]), 1)
+    
+    train_data_lbl = y_data[batch_time_idx, batch_idx_x, batch_idx_y]
+
+    
+    # create physics input data
+    grid_spacing_p = get_grid_spacing(d_points_per_ts, locations_x.shape[0])
+    idx_pos_x_p = np.expand_dims(np.arange(0, wavefields.shape[1])[0::grid_spacing_p], 1)
+    idx_pos_y_p = np.expand_dims(np.arange(0, wavefields.shape[2])[0::grid_spacing_p], 1)
+    
+    
+    idx_time_p = np.expand_dims(np.arange(0, t.shape[0]), 1)
+    batch_time_p = t[idx_time_p]
+    
+    batch_time_steps_p = np.expand_dims(np.repeat(np.array(batch_time_p), idx_pos_x_p.shape[0] * idx_pos_y_p.shape[0]), 1)
+    batch_pos_x_p = np.expand_dims(np.repeat(locations_x[idx_pos_x_p], idx_time_p.shape[0]*idx_pos_y_p.shape[0]), 1)
+    batch_pos_y_p = np.expand_dims(np.tile(np.squeeze(locations_y[idx_pos_y_p]), idx_time_p.shape[0]*idx_pos_x_p.shape[0]), 1)
+    physics_data_input = tf.cast(np.hstack((batch_time_steps_p, batch_pos_x_p ,batch_pos_y_p)), tf.float32)
+    #####################################################################################################################
+    
     for i in range(0, meta_epochs, 1):
         if i % 1000 == 0:
             print(str(i) + " / " + str(meta_epochs - 1))
@@ -505,13 +500,15 @@ def main():
             p_end = p_end_start
         
         if i >= meta_epochs // 2:
-          if i % ((meta_epochs // 2) // t.shape[0]) == 0: # todo clean up
+          if i % ((meta_epochs // 2) // (t.shape[0]+1)) == 0: # todo clean up
               p_end += 1
               p_end = min(p_end, t.shape[0]-1)
         else:
             p_end = p_end_start
+            
 
-        pinn.fit(input_data, data_lbl, input_data_physics, tf_epochs=tf_epochs, show_summary=show_summary)
+
+        pinn.fit(train_data, train_data_lbl, physics_data_input, tf_epochs=tf_epochs, show_summary=show_summary)
         
 
     with open(result_folder_name + "/" + experiment_name + "/loss.pkl", "wb") as fp:
