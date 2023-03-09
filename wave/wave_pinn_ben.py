@@ -290,13 +290,14 @@ class PhysicsInformedNN(object):
                 f_lst.append(f)
             y_lst_big.append(tf.concat(y_lst, axis=0))
             f_lst_big = tf.concat(f_lst, axis=0)
+
         return tf.squeeze(tf.concat(y_lst_big, axis=0)), tf.squeeze(tf.concat(f_lst_big, axis=0))
 
 
 # from matlab script############################################################
 def main():
-    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    #task_id = int(sys.argv[1])
+    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    task_id = int(sys.argv[1])
     print("task_id: ", task_id)
     input_bool = False
     if task_id < 5:
@@ -312,7 +313,7 @@ def main():
     p_norm = "l1"
     p_start_step = 0
 
-    width = 1024
+    width = 2#1024
     physics_scale_new = 50.0
     physics_scale = 0.0
     p_end_start = 1
@@ -342,7 +343,7 @@ def main():
 
     tf_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
     #############################################################################################
-    experiment_name = "wave_ben2_schedule_" + "_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_ps_" + str(physics_scale_new) + "_pstart_" + str(p_start_step) + "_id_" + str(task_id)
+    experiment_name = "wave_ben_sanity_schedule_" + "_h_l_" + str(hidden_layers) + "_w_" + str(width) + "_pn_" + p_norm + "_af_" + af_str + "_ps_" + str(physics_scale_new) + "_pstart_" + str(p_start_step) + "_id_" + str(task_id)
     
     
     os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
