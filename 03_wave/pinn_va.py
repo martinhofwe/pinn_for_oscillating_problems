@@ -430,10 +430,10 @@ class PINN:
 
             ##### log loss:
             self.ep_log.append(ep)
-            self.loss_log.append(ep_loss)
-            self.loss_ini_log.append(ep_loss_ini)
-            self.loss_bnd_log.append(ep_loss_bnd)
-            self.loss_pde_log.append(ep_loss_pde)
+            self.loss_log.append(ep_loss.numpy())
+            self.loss_ini_log.append(ep_loss_ini.numpy())
+            self.loss_bnd_log.append(ep_loss_bnd.numpy())
+            self.loss_pde_log.append(ep_loss_pde.numpy())
             ### log test loss
 
             test_error_data = 0.
@@ -449,8 +449,9 @@ class PINN:
                 test_error_data += tf.reduce_mean(tf.square(self.u_FDM[tm[0],:,:] - tf.reshape(u_hat, shape = [self.u_FDM.shape[1], self.u_FDM.shape[2]])))
                 test_error_physics += tf.reduce_mean(tf.square(gv_hat))
 
-            self.loss_d_test.append(test_error_data/len(self.test_time_idx))
-            self.loss_p_test.append(test_error_physics/len(self.test_time_idx))
+
+            self.loss_d_test.append((test_error_data/len(self.test_time_idx)).numpy())
+            self.loss_p_test.append((test_error_physics/len(self.test_time_idx)).numpy())
 
             if ep % self.f_mntr == 0:
                 elps = time.time() - t0
