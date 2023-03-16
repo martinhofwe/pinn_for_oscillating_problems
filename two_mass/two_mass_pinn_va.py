@@ -84,7 +84,7 @@ class PhysicsInformedNN(object):
         self.y_m2_simul, self.y_m2_dx_simul, self.y_m2_dx2_simul, self.y_m1_simul, self.y_m1_dx_simul, self.y_m1_dx2_simul, _, _, _ = simul_results
         self.scaling_factor = tf.constant(1.0, dtype=self.dtype)
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr, beta_1=0.8, decay=0.)
-        self.optimizer_sa = tf.keras.optimizers.Adam(lr=0.005, beta_1=.90)
+        #self.optimizer_sa = tf.keras.optimizers.Adam(lr=0.005, beta_1=.90)
         self.logger = logger
         self.physics_scale = physics_scale
         self.domain = domain
@@ -92,20 +92,23 @@ class PhysicsInformedNN(object):
         self.collocation_cuts = []
 
         # SA- https://github.com/levimcclenny/SA-PINNs
-        self.physics_weights_1 =  tf.Variable(tf.random.uniform([self.x_physics.shape[0], 1], dtype=self.dtype))
-        self.physics_weights_2 =  tf.Variable(tf.random.uniform([self.x_physics.shape[0], 1], dtype=self.dtype))
-        self.data_weights_1 =  tf.Variable(tf.random.uniform([self.x_ic.shape[0], 1], dtype=self.dtype))
-        self.data_weights_2 =  tf.Variable(tf.random.uniform([self.x_ic.shape[0], 1], dtype=self.dtype))
+        # self.physics_weights_1 =  tf.Variable(tf.random.uniform([self.x_physics.shape[0], 1], dtype=self.dtype))
+        # self.physics_weights_2 =  tf.Variable(tf.random.uniform([self.x_physics.shape[0], 1], dtype=self.dtype))
+        # self.data_weights_1 =  tf.Variable(tf.random.uniform([self.x_ic.shape[0], 1], dtype=self.dtype))
+        # self.data_weights_2 =  tf.Variable(tf.random.uniform([self.x_ic.shape[0], 1], dtype=self.dtype))
 
-        print("weight")
-        print(self.physics_weights_1.shape)
-        print(self.data_weights_1.shape)
+        #print("weight")
+        #print(self.physics_weights_1.shape)
+        #print(self.data_weights_1.shape)
 
     def setup_layers2(self, layers, h_activation_function):
         inputs = tf.keras.Input(shape=(layers[0],))
         x = inputs
         for count, width in enumerate(layers[1:-1]):
             if h_activation_function == "sine":
+                print(width, ": sine af")
+                x = tf.keras.layers.Dense(width, activation=tf.math.sin)(x)
+            elif h_activation_function == "sine_single" and count == 0:
                 print(width, ": sine af")
                 x = tf.keras.layers.Dense(width, activation=tf.math.sin)(x)
             else:
@@ -219,38 +222,20 @@ class PhysicsInformedNN(object):
     def calc_loss_ic(self):
         diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)
         #diff = self.y_lbl_ic - tf.concat((pred_y, pred_dy),axis=1) orig alex
-        diff_m1 = self.data_weights_1**2 * tf.square(diff[0, 0]) # todo alex fragen warum beides vorher squaren, warum loop überbleibsel? ic_loss würde nur auf das letzte gesetzt werden
+        diff_m1 = tf.square(diff[0, 0]) # todo alex fragen warum beides vorher squaren, warum loop überbleibsel? ic_loss würde nur auf das letzte gesetzt werden
         diff_m1_dx = 0.0#self.data_weights_1[:,1,ct]**2 * tf.square(diff[0, 2])
-        diff_m2 = self.data_weights_2**2 * tf.square(diff[0, 1])
+        diff_m2 = tf.square(diff[0, 1])
         diff_m2_dx = 0.0#self.data_weights_2[:,1,ct]**2 * tf.square(diff[0, 3]) #faster convergence without dx loss (covered via physics loss)
         ic_loss = tf.reduce_mean(diff_m1+diff_m2+diff_m1_dx+diff_m2_dx)
 
         return ic_loss
-    def calc_loss_ic_martin_old(self):
-        diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)
-        diff_m1 = self.data_weights_1 * diff[0, 0]
-        diff_m1_dx = self.data_weights_1 * diff[0, 2]
-        diff_m2 = self.data_weights_2 * diff[0, 1]
-        diff_m2_dx = self.data_weights_2 * diff[0, 3]
-        ic_loss = tf.reduce_mean(tf.square(tf.concat((diff_m1, diff_m2, diff_m1_dx, diff_m2_dx), axis=1)))
-        return ic_loss
 
     def calc_physics_loss(self, x_col): # changed to sqauring weights and loss before multiplying
-        m1_loss, m2_loss = self.f_model(x_col)
-        m1_loss_mean = tf.reduce_mean(tf.square(self.physics_weights_1)*tf.square(m1_loss))
-        m2_loss_mean = tf.reduce_mean(tf.square(self.physics_weights_2)*tf.square(m2_loss))
-        return [m1_loss_mean, m2_loss_mean]
-
-    def calc_loss_ic_old(self):
-        diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)
-        ic_loss = tf.reduce_mean(tf.square(diff))
-        return ic_loss
-
-    def calc_physics_loss_old(self, x_col):
         m1_loss, m2_loss = self.f_model(x_col)
         m1_loss_mean = tf.reduce_mean(tf.square(m1_loss))
         m2_loss_mean = tf.reduce_mean(tf.square(m2_loss))
         return [m1_loss_mean, m2_loss_mean]
+
 
     @tf.function
     def train_step(self, x_col):
@@ -264,16 +249,16 @@ class PhysicsInformedNN(object):
 
             # retrieve gradients
         grads = tape.gradient(combined_weighted_loss, self.model.weights)
-        grads_p_1 = tape.gradient(combined_weighted_loss, self.physics_weights_1)
-        grads_p_2 = tape.gradient(combined_weighted_loss, self.physics_weights_2)
-        grads_d_1 = tape.gradient(combined_weighted_loss, self.data_weights_1)
-        grads_d_2 = tape.gradient(combined_weighted_loss, self.data_weights_2)
+        # grads_p_1 = tape.gradient(combined_weighted_loss, self.physics_weights_1)
+        # grads_p_2 = tape.gradient(combined_weighted_loss, self.physics_weights_2)
+        # grads_d_1 = tape.gradient(combined_weighted_loss, self.data_weights_1)
+        # grads_d_2 = tape.gradient(combined_weighted_loss, self.data_weights_2)
         del tape
         self.optimizer.apply_gradients(zip(grads, self.model.weights))
-        self.optimizer_sa.apply_gradients(zip([-grads_p_1], [self.physics_weights_1]))
-        self.optimizer_sa.apply_gradients(zip([-grads_p_2], [self.physics_weights_2]))
-        self.optimizer_sa.apply_gradients(zip([-grads_d_1], [self.data_weights_1]))
-        self.optimizer_sa.apply_gradients(zip([-grads_d_2], [self.data_weights_2]))
+        # self.optimizer_sa.apply_gradients(zip([-grads_p_1], [self.physics_weights_1]))
+        # self.optimizer_sa.apply_gradients(zip([-grads_p_2], [self.physics_weights_2]))
+        # self.optimizer_sa.apply_gradients(zip([-grads_d_1], [self.data_weights_1]))
+        # self.optimizer_sa.apply_gradients(zip([-grads_d_2], [self.data_weights_2]))
 
 
         physics_losses, pred_parameters = self.f_model_detail(self.input_all)
@@ -294,6 +279,11 @@ class PhysicsInformedNN(object):
 
             # log train loss and errors specified in logger error
             self.logger.log_train_epoch(epoch, loss_value, log_data)
+            
+            if epoch % 5_000 == 0:
+                y_m1, y_m2, y_m1_dx, y_m2_dx, y_m1_dx2, y_m2_dx2 = pred_parameters
+                y_pred = tf.concat((y_m1, y_m2), axis=1)
+                np.save(self.storage_path + "/plots/" + "res_" + str(epoch)+".npy", y_pred)
 
             if epoch % 25_000 == 0:
                 self.store_intermediate_result(epoch, pred_parameters, physics_losses)
@@ -319,41 +309,40 @@ def main():
     print("task_id: ", task_id)
 
     # Parameters that change based on task id ############################################################################
-    
-    
-    
-    act_func = "sine"
-    af_str = "sin"
+    if task_id <= 4:
+        act_func = "tanh"
+        af_str = "tanh"
+    elif 4 < task_id <= 9:
+        act_func = "sine"
+        af_str = "sin"
+    elif 9 < task_id <= 14:
+        act_func = "sine_single"
+        af_str = "sin_single"
 
     ic_points_idx = [0]
-    d_p_string = "vanilla_sa"
-
+    d_p_string = "vanilla_va"
+    '''
     if task_id <= 1:
-        lr = tf.Variable(1e-4)
-        physics_scale = tf.Variable(1e-6)
+      ic_points_idx = [7499]
+      d_p_string = "end"
     elif 1 < task_id <= 3:
-      lr = tf.Variable(1e-3)
-      physics_scale = tf.Variable(1e-6)
+      ic_points_idx = [0, 7499]
+      d_p_string = "start_end"
     elif 3 < task_id <= 5:
-      lr = tf.Variable(1e-4)
-      physics_scale = tf.Variable(1e-5)
-    elif 5 < task_id <= 7:
-      lr = tf.Variable(1e-3)
-      physics_scale = tf.Variable(1e-5)
-    elif 7 < task_id <= 9:
-      lr = tf.Variable(1e-3)
-      physics_scale = tf.Variable(1e-4)
-
-    
+      ic_points_idx = [x for x in range(0, 7499, 500)]
+      d_p_string = "cont"
+    '''
+    lr = tf.Variable(1e-4)
     print("ic points: ", ic_points_idx)
     hidden_layers = 7
 
     weight_factor = 2
-    
+
+    physics_scale = tf.Variable(1e-6)
     data_loss_scl = tf.Variable(1.0)
     ######################################################################################################################
     # Fixed parameters PINN
-    training_epochs = 1_200_000
+    training_epochs = 1_200_001
     width = 128
     layers = get_layer_list(nr_inputs=1, nr_outputs=2, nr_hidden_layers=hidden_layers, width=width)
 
@@ -425,7 +414,7 @@ def main():
     # Setting up folder structure # todo clean up
     result_folder_name = 'res'
     os.makedirs(result_folder_name, exist_ok=True)
-    experiment_name = "two_mass_sa_martin_fixeds_no_conc_sin_h_l_" + str(hidden_layers) + "_w_" + str(
+    experiment_name = "two_mass_va_martin_tc_fixeds_conc_sin_h_l_" + str(hidden_layers) + "_w_" + str(
         width) + "_af_" + af_str + "_lr_" + str(lr.numpy()) + "_expl_" + str(exp_len) + "_steps_" + str(
         steps) + "_ds_" + str(data_loss_scl.numpy()) + "_ps_" + str(physics_scale.numpy()) + "_wf_" + str(
         weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)

@@ -20,8 +20,8 @@ from plot_sol import *
 from fdm import FDM
 
 def main():
-    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    task_id = int(sys.argv[1])
+    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    #task_id = int(sys.argv[1])
     
     # gpu confiuration
     config_gpu(gpu_flg = 1)
@@ -42,7 +42,7 @@ def main():
     elif 10 <= task_id < 15:
         act = "sine_all"
 
-    test_time_idx = [0, 100, 200, 300, 400, 500]
+    test_time_idx = [0, 50, 100, 150, 200, 250, 300, 350, 400, 500]
 
     # domain
     tmin = 0.; tmax = 10.; nt = int(5e2) + 1
@@ -83,7 +83,21 @@ def main():
                                     N_pde = int(5e4))
 
 
-
+    ################################
+    result_folder_name = 'res_wave_jap'
+    os.makedirs(result_folder_name, exist_ok=True)
+    
+    experiment_name = "wave_sa_" + str(depth) + "_w_" + str(
+        width) + "_af_" + act + "_lr_" + str(lr) + "_ps_" + str(w_pde) + "_id_" + str(task_id)
+    print("Config name: ", experiment_name)
+    os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
+    os.makedirs(result_folder_name + "/" + experiment_name + "/plots_2d", exist_ok=True)
+    os.makedirs(result_folder_name + "/" + experiment_name + "/plots_3d", exist_ok=True)
+    os.makedirs(result_folder_name + "/" + experiment_name + "/output", exist_ok=True)
+    plots_path = result_folder_name + "/" + experiment_name + "/"
+    output_path = result_folder_name + "/" + experiment_name + "/output/"
+    
+    ##################
     pinn = PINN(t_ini, x_ini, y_ini, u_ini, 
                 t_bndx, x_bndx, y_bndx, 
                 t_bndy, x_bndy, y_bndy, 
@@ -94,21 +108,8 @@ def main():
                 lr, opt, 
                 f_scl, laaf, c, 
                 w_ini, w_bnd, w_pde, BC, 
-                f_mntr, r_seed, )
+                f_mntr, r_seed, output_path)
     
-        ################################
-    result_folder_name = 'res_wave_jap'
-    os.makedirs(result_folder_name, exist_ok=True)
-    
-    experiment_name = "wave_sa_" + str(depth) + "_w_" + str(
-        width) + "_af_" + act + "_lr_" + str(lr) + "_ps_" + str(w_pde) + "_id_" + str(task_id)
-    print("Config name: ", experiment_name)
-    os.makedirs(result_folder_name + "/" + experiment_name, exist_ok=True)
-    os.makedirs(result_folder_name + "/" + experiment_name + "/plots_2d", exist_ok=True)
-    os.makedirs(result_folder_name + "/" + experiment_name + "/plots_3d", exist_ok=True)
-    plots_path = result_folder_name + "/" + experiment_name + "/"
-    
-        ##################
     for tm in range(nt):
         if tm % 100 == 0:
             tm = np.array([tm])

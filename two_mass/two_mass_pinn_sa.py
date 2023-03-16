@@ -41,6 +41,7 @@ class Logger(object):
         print("\nTraining started")
         print("================")
         print(pinn.model.summary())
+        #tf.keras.utils.plot_model(pinn.model, "pinn_sa_concat.svg")
 
     def log_train_epoch(self, epoch, loss, log_data):
         if epoch % self.save_loss_freq == 0:
@@ -63,12 +64,10 @@ class PhysicsInformedNN(object):
     def __init__(self, layers, h_activation_function, logger, simul_constants, domain, physics_scale, lr, data,
                  simul_results, storage_path):
 
-        if h_activation_function == "sine_all":
-            inputs, outputs = self.setup_layers2(layers, h_activation_function)
-            self.model = tf.keras.Model(inputs=inputs, outputs=outputs, name="concat_model")
-        else:
-            self.model = tf.keras.Sequential()
-            self.setup_layers(layers, h_activation_function)
+        #self.model = tf.keras.Sequential()
+        #self.setup_layers(layers, h_activation_function)
+        inputs, outputs = self.setup_layers2(layers, h_activation_function)
+        self.model = tf.keras.Model(inputs=inputs, outputs=outputs, name="concat_model")
 
         self.storage_path = storage_path
         self.dtype = tf.float32
@@ -106,7 +105,10 @@ class PhysicsInformedNN(object):
         inputs = tf.keras.Input(shape=(layers[0],))
         x = inputs
         for count, width in enumerate(layers[1:-1]):
-            if h_activation_function == "sine_all":
+            if h_activation_function == "sine":
+                print(width, ": sine af")
+                x = tf.keras.layers.Dense(width, activation=tf.math.sin)(x)
+            elif h_activation_function == "sine_single" and count == 0:
                 print(width, ": sine af")
                 x = tf.keras.layers.Dense(width, activation=tf.math.sin)(x)
             else:
@@ -118,6 +120,7 @@ class PhysicsInformedNN(object):
         outputs = tf.keras.layers.Dense(layers[-1], activation=None)(x)
 
         return inputs, outputs
+
     def setup_layers(self, layers, h_activation_function):
         self.model.add(tf.keras.layers.InputLayer(input_shape=(layers[0],)))
         print("Input Layer + Hidden Layers")
@@ -226,14 +229,6 @@ class PhysicsInformedNN(object):
         ic_loss = tf.reduce_mean(diff_m1+diff_m2+diff_m1_dx+diff_m2_dx)
 
         return ic_loss
-    def calc_loss_ic_martin_old(self):
-        diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)
-        diff_m1 = self.data_weights_1 * diff[0, 0]
-        diff_m1_dx = self.data_weights_1 * diff[0, 2]
-        diff_m2 = self.data_weights_2 * diff[0, 1]
-        diff_m2_dx = self.data_weights_2 * diff[0, 3]
-        ic_loss = tf.reduce_mean(tf.square(tf.concat((diff_m1, diff_m2, diff_m1_dx, diff_m2_dx), axis=1)))
-        return ic_loss
 
     def calc_physics_loss(self, x_col): # changed to sqauring weights and loss before multiplying
         m1_loss, m2_loss = self.f_model(x_col)
@@ -241,16 +236,6 @@ class PhysicsInformedNN(object):
         m2_loss_mean = tf.reduce_mean(tf.square(self.physics_weights_2)*tf.square(m2_loss))
         return [m1_loss_mean, m2_loss_mean]
 
-    def calc_loss_ic_old(self):
-        diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)
-        ic_loss = tf.reduce_mean(tf.square(diff))
-        return ic_loss
-
-    def calc_physics_loss_old(self, x_col):
-        m1_loss, m2_loss = self.f_model(x_col)
-        m1_loss_mean = tf.reduce_mean(tf.square(m1_loss))
-        m2_loss_mean = tf.reduce_mean(tf.square(m2_loss))
-        return [m1_loss_mean, m2_loss_mean]
 
     @tf.function
     def train_step(self, x_col):
@@ -294,6 +279,11 @@ class PhysicsInformedNN(object):
 
             # log train loss and errors specified in logger error
             self.logger.log_train_epoch(epoch, loss_value, log_data)
+            
+            if epoch % 5_000 == 0:
+                y_m1, y_m2, y_m1_dx, y_m2_dx, y_m1_dx2, y_m2_dx2 = pred_parameters
+                y_pred = tf.concat((y_m1, y_m2), axis=1)
+                np.save(self.storage_path + "/plots/" + "res_" + str(epoch)+".npy", y_pred)
 
             if epoch % 25_000 == 0:
                 self.store_intermediate_result(epoch, pred_parameters, physics_losses)
@@ -314,17 +304,24 @@ def get_layer_list(nr_inputs, nr_outputs, nr_hidden_layers, width):
 
 
 def main():
-    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    task_id = int(sys.argv[1])
+    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    #task_id = int(sys.argv[1])
     print("task_id: ", task_id)
 
     # Parameters that change based on task id ############################################################################
-    act_func = "sine_all"
-    af_str = "sine_all"
+    if task_id <= 4:
+        act_func = "tanh"
+        af_str = "tanh"
+    elif 4 < task_id <= 9:
+        act_func = "sine"
+        af_str = "sin"
+    elif 9 < task_id <= 14:
+        act_func = "sine_single"
+        af_str = "sin_single"
 
     ic_points_idx = [0]
     d_p_string = "vanilla_sa"
-
+    '''
     if task_id <= 1:
       ic_points_idx = [7499]
       d_p_string = "end"
@@ -334,19 +331,19 @@ def main():
     elif 3 < task_id <= 5:
       ic_points_idx = [x for x in range(0, 7499, 500)]
       d_p_string = "cont"
+    '''
 
-    
+    lr = tf.Variable(1e-4)
     print("ic points: ", ic_points_idx)
     hidden_layers = 7
 
     weight_factor = 2
 
-    lr = tf.Variable(1e-4)
     physics_scale = tf.Variable(1e-6)
     data_loss_scl = tf.Variable(1.0)
     ######################################################################################################################
     # Fixed parameters PINN
-    training_epochs = 1_200_000
+    training_epochs = 1_200_001
     width = 128
     layers = get_layer_list(nr_inputs=1, nr_outputs=2, nr_hidden_layers=hidden_layers, width=width)
 
@@ -374,6 +371,7 @@ def main():
     #exp_len = 750
     #steps = 4_001
     ###
+
 
     start_vec = [1.0, 0.0, 0.5, 0.0]  # pos m2, dx pos m2, pos m1, dx pos m1
     simul_results, simul_constants = get_simulated_data_two_mass(start_vec, end_time=x_d[1], steps=steps,
@@ -405,8 +403,6 @@ def main():
     y_lbl_ic = tf.constant(y_data_all, dtype=tf.float32)
     x_physics = tf.convert_to_tensor(input_data_physics,
                                      dtype=tf.float32)  # not used in the moment since we randomly sample physic points
-    
-    print(x_physics.shape)
 
     # test set, used to calcualte logged loss not used in training
     y_lbl_m1 = y_m1_simul[data_start:]
@@ -419,7 +415,7 @@ def main():
     # Setting up folder structure # todo clean up
     result_folder_name = 'res'
     os.makedirs(result_folder_name, exist_ok=True)
-    experiment_name = "two_mass_sa_martin_tc_fixeds_h_l_" + str(hidden_layers) + "_w_" + str(
+    experiment_name = "two_mass_sa_martin_tc_fixeds_conc_sin_h_l_" + str(hidden_layers) + "_w_" + str(
         width) + "_af_" + af_str + "_lr_" + str(lr.numpy()) + "_expl_" + str(exp_len) + "_steps_" + str(
         steps) + "_ds_" + str(data_loss_scl.numpy()) + "_ps_" + str(physics_scale.numpy()) + "_wf_" + str(
         weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)

@@ -198,6 +198,9 @@ class PhysicsInformedNN(object):
 
             # log train loss and errors specified in logger error
             self.logger.log_train_epoch(epoch, loss_value, log_data)
+            
+            if epoch % 2_000 == 0:
+                np.save(self.storage_path + "/plots/" + "res_"+str(epoch) + ".npy", pred_y_all)
 
             if epoch % 25_000 == 0:
                 self.store_intermediate_result(epoch, pred_y_all, physics_loss)
@@ -223,45 +226,21 @@ def main():
     print("task_id: ", task_id)
 
     # Parameters that change based on task id ############################################################################
-    if task_id < 100:
-        act_func = "tanh"
-        af_str = "tanh"
-        task_id_intern = task_id
-    else:
-        act_func = "sine"
-        af_str = "sine"
-        task_id_intern = task_id-100
+    if task_id == 0:
+        ic_points_idx = [0]
+    elif task_id == 1:
+        ic_points_idx = np.arange(0, 500, 10)
+    elif task_id == 2:
+        ic_points_idx = np.arange(0, 4000, 10)
     
     print("task id ", task_id)
-    print(task_id_intern)
-    scales = [0.1, 1, 10, 100]
-    nn_depth = [1, 2, 3, 4, 5]
-    
-    if 0 <= task_id_intern < 25:
-        scale_m1 = scales[0]
-        s_f = 0
-    elif 25 <= task_id_intern < 50:
-        scale_m1 = scales[1]
-        s_f = 1
-    elif 50 <= task_id_intern < 75:
-        scale_m1 = scales[2]
-        s_f = 2
-    elif 75 <= task_id_intern < 100:
-        scale_m1 = scales[3]
-        s_f = 3
-    
-    if (0+25*s_f) <= task_id_intern < (5+25*s_f):
-        h_layers = nn_depth[0]
-    elif (5+25*s_f) <= task_id_intern < (10+25*s_f):
-        h_layers = nn_depth[1]
-    elif (10+25*s_f) <= task_id_intern < (15+25*s_f):
-        h_layers = nn_depth[2]
-    elif (15+25*s_f) <= task_id_intern < (20+25*s_f):
-        h_layers = nn_depth[3]
-    elif (20+25*s_f) <= task_id_intern < (25+25*s_f):
-        h_layers = nn_depth[4]
 
-    ic_points_idx = [0]
+    act_func = "tanh"
+    af_str = "tanh"
+
+    scale_m1 = 1
+    h_layers = 5
+
     d_p_string = "vanilla"
 
     print("ic points: ", ic_points_idx)
@@ -270,10 +249,10 @@ def main():
     weight_factor = 2
 
     lr = tf.Variable(1e-4)
-    physics_scale = tf.Variable(1e-4)
+    physics_scale = tf.Variable(0.0)
     ######################################################################################################################
     # Fixed parameters PINN
-    training_epochs = 900_000
+    training_epochs = 900_001
     width = 32
     layers = get_layer_list(nr_inputs=1, nr_outputs=1, nr_hidden_layers=hidden_layers, width=width)
 
@@ -317,7 +296,7 @@ def main():
     # Setting up folder structure # todo clean up
     result_folder_name = 'res'
     os.makedirs(result_folder_name, exist_ok=True)
-    experiment_name = "one_mass_va_martin_tc_fixeds_h_l_" + str(hidden_layers) + "_w_" + str(
+    experiment_name = "one_mass_nn_martin_tc_fixeds_h_l_" + str(hidden_layers) + "_w_" + str(
         width) + "_af_" + af_str + "_lr_" + str(lr.numpy()) + "_expl_" + str(exp_len) + "_steps_" + str(
         steps) + "_ps_" + str(physics_scale.numpy()) + "_sf_" + str(
         scale_m1) + "_dp_" + d_p_string + "_id_" + str(task_id)

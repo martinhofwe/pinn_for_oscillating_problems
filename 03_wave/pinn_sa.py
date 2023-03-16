@@ -24,7 +24,7 @@ class PINN:
                 lr = 1e-3, opt = "Adam", 
                 f_scl = "minmax", laaf = False, c = 1., 
                 w_ini = 1., w_bnd = 1., w_pde = 1., BC = "Neu", 
-                f_mntr = 10, r_seed = 1234):
+                f_mntr = 10, r_seed = 1234, out_path = ""):
 
         # configuration
         self.dat_typ = tf.float32
@@ -81,6 +81,7 @@ class PINN:
         self.y_inf = np.unique(TX[:, 2:3])
         self.u_FDM = u_FDM
         self.test_time_idx = test_time_idx
+        self.output_path = out_path
 
         self.loss_p_test     = []
         self.loss_d_test = []
@@ -474,6 +475,9 @@ class PINN:
                 u_hat, gv_hat = self.infer(t_inf, x_inf, y_inf)
                 test_error_data += tf.reduce_mean(tf.square(self.u_FDM[tm[0],:,:] - tf.reshape(u_hat, shape = [self.u_FDM.shape[1], self.u_FDM.shape[2]])))
                 test_error_physics += tf.reduce_mean(tf.square(gv_hat))
+                
+                if ep % 2_000 == 0:
+                    np.save(self.output_path + "res_" + str(tm) + "_" + str(ep)+".npy", tf.reshape(u_hat, shape = [self.u_FDM.shape[1], self.u_FDM.shape[2]]).numpy())
 
 
             self.loss_d_test.append((test_error_data/len(self.test_time_idx)).numpy())
