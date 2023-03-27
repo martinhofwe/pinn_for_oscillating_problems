@@ -208,8 +208,8 @@ class PhysicsInformedNN(object):
 
     def predict(self, x):
         y = self.model(x)
-        f_m1, f_m2 = self.f_model(x)
-        return [y, f_m1, f_m2]
+        f_m1 = self.f_model(x)
+        return [y, f_m1]
 
 
 def get_layer_list(nr_inputs, nr_outputs, nr_hidden_layers, width):
