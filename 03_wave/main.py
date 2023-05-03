@@ -20,8 +20,8 @@ from plot_sol import *
 from fdm import FDM
 
 def main():
-    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    #task_id = int(sys.argv[1])
+    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    task_id = int(sys.argv[1])
     
     # gpu confiuration
     config_gpu(gpu_flg = 1)
@@ -60,6 +60,11 @@ def main():
                 nt, dt, 
                 x, y, u, c, BC)
     
+    
+    print(t_)
+    print(t_.shape)
+    #np.save("t.npy", t_)
+    #assert False
 
     # prep data
     TX, lb, ub, \

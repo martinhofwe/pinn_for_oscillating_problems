@@ -369,16 +369,22 @@ class PINN:
                 t_ini, x_ini, y_ini, u_ini, 
                 t_bndx, x_bndx, y_bndx, 
                 t_bndy, x_bndy, y_bndy, 
-                t_pde, x_pde, y_pde):
+                t_pde, x_pde, y_pde, use_sa):
+        
+        
+        
         loss, grad, grad_sa_ini, grad_sa_pde, grad_sa_bndx, grad_sa_bndy = self.loss_grad(t_ini, x_ini, y_ini, u_ini, 
                                     t_bndx, x_bndx, y_bndx, 
                                     t_bndy, x_bndy, y_bndy, 
                                     t_pde, x_pde, y_pde)
         self.optimizer.apply_gradients(zip(grad, self.params))
-        self.optimizer_sa_ini.apply_gradients(zip([-grad_sa_ini], [self.weights_sa_ini]))
-        self.optimizer_sa_pde.apply_gradients(zip([-grad_sa_pde], [self.weights_sa_pde]))
-        self.optimizer_sa_bndx.apply_gradients(zip([-grad_sa_bndx], [self.weights_sa_bndx]))
-        self.optimizer_sa_bndy.apply_gradients(zip([-grad_sa_bndy], [self.weights_sa_bndy]))
+        if use_sa:
+            #tf.print("using")
+            self.optimizer_sa_ini.apply_gradients(zip([-grad_sa_ini], [self.weights_sa_ini]))
+            self.optimizer_sa_pde.apply_gradients(zip([-grad_sa_pde], [self.weights_sa_pde]))
+            self.optimizer_sa_bndx.apply_gradients(zip([-grad_sa_bndx], [self.weights_sa_bndx]))
+            self.optimizer_sa_bndy.apply_gradients(zip([-grad_sa_bndy], [self.weights_sa_bndy]))
+
         return loss
 
     def train(self, 
@@ -394,6 +400,8 @@ class PINN:
         t_pde = self.t_pde; x_pde = self.x_pde; y_pde = self.y_pde
         
         t0 = time.time()
+        
+        use_sa = True
         for ep in range(epoch):
             es_pat      = 0
             es_crt      = 5
@@ -405,10 +413,17 @@ class PINN:
             
             # full-batch training
             if batch == 0:
+                if ep == 10000:
+                    print("stop using sa, epoch: ", ep)
+                    use_sa = False
+                    self.weights_sa_ini = self.weights_sa_ini_ones
+                    self.weights_sa_bndx = self.weights_sa_bndx_ones
+                    self.weights_sa_bndy = self.weights_sa_bndy_ones
+                    self.weights_sa_pde = self.weights_sa_pde_ones
                 ep_loss = self.grad_desc(t_ini, x_ini, y_ini, u_ini, 
                                          t_bndx, x_bndx, y_bndx, 
                                          t_bndy, x_bndy, y_bndy, 
-                                         t_pde, x_pde, y_pde)
+                                         t_pde, x_pde, y_pde, use_sa)
                 ep_loss_ini = self.loss_ini(t_ini, x_ini, y_ini, u_ini, self.weights_sa_ini_ones)
                 ep_loss_bnd = self.loss_bndx(t_bndx, x_bndx, y_bndx, self.weights_sa_bndx_ones) \
                                 + self.loss_bndy(t_bndy, x_bndy, y_bndy, self.weights_sa_bndy_ones)

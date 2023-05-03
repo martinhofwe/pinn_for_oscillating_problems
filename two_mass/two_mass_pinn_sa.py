@@ -221,12 +221,12 @@ class PhysicsInformedNN(object):
 
     def calc_loss_ic(self):
         diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)
-        #diff = self.y_lbl_ic - tf.concat((pred_y, pred_dy),axis=1) orig alex
-        diff_m1 = self.data_weights_1**2 * tf.square(diff[0, 0]) # todo alex fragen warum beides vorher squaren, warum loop überbleibsel? ic_loss würde nur auf das letzte gesetzt werden
-        diff_m1_dx = 0.0#self.data_weights_1[:,1,ct]**2 * tf.square(diff[0, 2])
-        diff_m2 = self.data_weights_2**2 * tf.square(diff[0, 1])
-        diff_m2_dx = 0.0#self.data_weights_2[:,1,ct]**2 * tf.square(diff[0, 3]) #faster convergence without dx loss (covered via physics loss)
+        diff_m1 = self.data_weights_1**2 * tf.square(diff[:, 0:1]) 
+        diff_m1_dx = 0.0
+        diff_m2 = self.data_weights_2**2 * tf.square(diff[:, 1:2])
+        diff_m2_dx = 0.0 #faster convergence without dx loss (covered via physics loss)
         ic_loss = tf.reduce_mean(diff_m1+diff_m2+diff_m1_dx+diff_m2_dx)
+
 
         return ic_loss
 
@@ -319,7 +319,7 @@ def main():
         act_func = "sine_single"
         af_str = "sin_single"
 
-    ic_points_idx = [0]
+    ic_points_idx = np.arange(0, 7500, 100)#[0]
     d_p_string = "vanilla_sa"
     '''
     if task_id <= 1:
@@ -415,7 +415,7 @@ def main():
     # Setting up folder structure # todo clean up
     result_folder_name = 'res'
     os.makedirs(result_folder_name, exist_ok=True)
-    experiment_name = "two_mass_sa_martin_tc_fixeds_conc_sin_h_l_" + str(hidden_layers) + "_w_" + str(
+    experiment_name = "two_mass_sa_martin_tc_data100_fixeds_conc_sin_h_l_" + str(hidden_layers) + "_w_" + str(
         width) + "_af_" + af_str + "_lr_" + str(lr.numpy()) + "_expl_" + str(exp_len) + "_steps_" + str(
         steps) + "_ds_" + str(data_loss_scl.numpy()) + "_ps_" + str(physics_scale.numpy()) + "_wf_" + str(
         weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)

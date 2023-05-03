@@ -20,8 +20,8 @@ from plot_sol import *
 from fdm import FDM
 
 def main():
-    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    #task_id = int(sys.argv[1])
+    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    task_id = int(sys.argv[1])
     
     # gpu confiuration
     config_gpu(gpu_flg = 1)
@@ -92,6 +92,46 @@ def main():
     os.makedirs(result_folder_name + "/" + experiment_name + "/output", exist_ok=True)
     plots_path = result_folder_name + "/" + experiment_name + "/"
     output_path = result_folder_name + "/" + experiment_name + "/output/"
+    
+    print(u_FDM.shape)
+    fig = plt.figure(figsize=(16,3))
+    plt_counter = 1
+    for tm in range(nt):
+        if tm % 100 == 0:
+            #plt.subplot(1, 6, plt_counter)
+            
+            tm = np.array([tm])
+            sol = np.squeeze(u_FDM[tm,:,:])
+            print(sol.shape)
+
+            t_inf = np.unique(TX[:,0:1])
+            x_inf = np.unique(TX[:,1:2])
+            y_inf = np.unique(TX[:,2:3])
+
+            x_inf, y_inf = np.meshgrid(x_inf, y_inf)
+            x_inf, y_inf = x_inf.reshape(-1, 1), y_inf.reshape(-1, 1)
+            t_inf = np.tile(t_inf.reshape(-1, 1), (1, x_inf.shape[0])).T[:,tm]
+
+            #u_hat, gv_hat = pinn.infer(t_inf, x_inf, y_inf)
+
+            #fig  = plt.figure(figsize = (6, 6))
+            ax   = fig.add_subplot(1, 6, plt_counter, projection = "3d")
+            surf = ax.plot_surface(x, y, sol, cmap = "coolwarm", 
+                                linewidth = 0, vmin = -.5, vmax = .5)
+
+            ax.set_xlim(xmin, xmax)
+            ax.set_ylim(ymin, ymax)
+            ax.axis('off')
+            plt.tight_layout()
+            #ax.set_zlim(-1, 1)
+            #ax.set_xlabel("x", fontstyle = "italic")
+            #ax.set_ylabel("y", fontstyle = "italic")
+            #ax.set_zlabel("u (t, x, y)", fontstyle = "italic")
+            #plt.show()
+            
+            plt_counter += 1
+    
+    fig.savefig(plots_path +'plots_3d/pres_res_3d_' + str(tm) +'.svg', format='svg', dpi=1200,bbox_inches='tight')
 
     pinn = PINN(t_ini, x_ini, y_ini, u_ini, 
                 t_bndx, x_bndx, y_bndx, 
@@ -299,6 +339,8 @@ def main():
             plt.yticks(ticks=np.arange(0, x.shape[1], 1)[::tick_spacing], labels=[str(tick) for tick in y[:, 0]][::tick_spacing])
             fig_res.savefig(plots_path +'plots_2d/res_2d_' + str(tm) +'.svg', format='svg', dpi=1200)
             plt.close('all')
+    
+    
 
     # for n in range(nt):
     #     if n % (int(nt / 5)) == 0:

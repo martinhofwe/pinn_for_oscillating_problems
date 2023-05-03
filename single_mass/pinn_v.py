@@ -157,7 +157,7 @@ class PhysicsInformedNN(object):
         return y_pred_full
 
     def calc_loss_ic(self):
-        diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)[:, 0]
+        diff = self.y_lbl_ic - self.pred_with_grad(self.x_ic)[:, 0:1]
         diff = tf.square(diff)
         ic_loss = tf.reduce_mean(diff)
 
@@ -202,7 +202,7 @@ class PhysicsInformedNN(object):
             if epoch % 2_000 == 0:
                 np.save(self.storage_path + "/plots/" + "res_"+str(epoch) + ".npy", pred_y_all)
 
-            if epoch % 25_000 == 0:
+            if epoch % 5_000 == 0:
                 self.store_intermediate_result(epoch, pred_y_all, physics_loss)
         self.logger.log_train_end(self.tf_epochs, log_data)
 
@@ -264,7 +264,7 @@ def main():
     elif (20+25*s_f) <= task_id_intern < (25+25*s_f):
         h_layers = nn_depth[4]
 
-    ic_points_idx = [0]
+    ic_points_idx = np.arange(0, 4000, 100)#[0]
     d_p_string = "vanilla"
 
     print("ic points: ", ic_points_idx)
@@ -276,7 +276,7 @@ def main():
     physics_scale = tf.Variable(1e-4)
     ######################################################################################################################
     # Fixed parameters PINN
-    training_epochs = 900_001
+    training_epochs = 30_001
     width = 32
     layers = get_layer_list(nr_inputs=1, nr_outputs=1, nr_hidden_layers=hidden_layers, width=width)
 
@@ -304,6 +304,10 @@ def main():
     t = tExci[data_start:]
     domain = [t[0], t[-1]]
 
+    #np.save("t.npy", t)
+    #np.save("sol95.npy", y_m1_simul)
+
+
     input_all = tf.cast(tf.concat([t],axis=-1),tf.float32)
     y_lbl_all = tf.convert_to_tensor(y_lbl, dtype=tf.float32)
     input_data = tf.cast(x_data, tf.float32)
@@ -320,7 +324,7 @@ def main():
     # Setting up folder structure # todo clean up
     result_folder_name = 'res'
     os.makedirs(result_folder_name, exist_ok=True)
-    experiment_name = "one_mass_va_martin_tc_fixeds_h_l_" + str(hidden_layers) + "_w_" + str(
+    experiment_name = "one_mass_va_martin_tc_fixeds_" +str(len(ic_points_idx)) +"_h_l_" + str(hidden_layers) + "_w_" + str(
         width) + "_af_" + af_str + "_lr_" + str(lr.numpy()) + "_expl_" + str(exp_len) + "_steps_" + str(
         steps) + "_ps_" + str(physics_scale.numpy()) + "_sf_" + str(
         scale_m1) + "_dp_" + d_p_string + "_id_" + str(task_id)
