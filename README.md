@@ -3,7 +3,7 @@
 
 The code in the following folders was only adapted from me not originally written.
 code in folder SA_PINNs is taken and adapted from:
-https://github.com/levimcclenny/SA-PINNs
+https://github.com/levimcclenny/SA-PINN
 
 code in 03_wave folder originally from:
 https://github.com/ShotaDeguchi/PINN_TF2
