@@ -221,8 +221,8 @@ def get_layer_list(nr_inputs, nr_outputs, nr_hidden_layers, width):
 
 
 def main():
-    task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
-    #task_id = int(sys.argv[1])
+    #task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+    task_id = int(sys.argv[1])
     print("task_id: ", task_id)
 
     # Parameters that change based on task id ############################################################################
