@@ -473,7 +473,7 @@ def main():
     plt.scatter(t[p_start_step:], y_lbl_m1[1:], label="p points", c="r", s=1)
     plt.legend()
     fig_res.savefig(result_folder_name + "/" + experiment_name + '/p_points.svg', format='svg', dpi=1200)
-    assert False
+    #assert False
 
     pinn = PhysicsInformedNN(layers, h_activation_function=act_func, logger=logger, simul_constants=simul_constants,
                              domain=domain, physics_scale=physics_scale, lr=lr, data=pinn_data,
