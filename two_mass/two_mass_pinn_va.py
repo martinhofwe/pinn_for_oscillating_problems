@@ -418,7 +418,7 @@ def main():
     # Setting up folder structure # todo clean up
     result_folder_name = 'res'
     os.makedirs(result_folder_name, exist_ok=True)
-    experiment_name = "two_mass_va_martin_tc_data100_fixeds_conc_sin_h_l_" + str(hidden_layers) + "_w_" + str(
+    experiment_name = "two_mass_va_fixeds_conc_sin_h_l_" + str(hidden_layers) + "_w_" + str(
         width) + "_af_" + af_str + "_lr_" + str(lr.numpy()) + "_expl_" + str(exp_len) + "_steps_" + str(
         steps) + "_ds_" + str(data_loss_scl.numpy()) + "_ps_" + str(physics_scale.numpy()) + "_wf_" + str(
         weight_factor) + "_dp_" + d_p_string + "_id_" + str(task_id)
